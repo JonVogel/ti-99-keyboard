@@ -1,0 +1,6 @@
+.theia/
+.vscode/
+build/
+*.bin
+*.elf
+*.map
