@@ -13,7 +13,9 @@ into key presses the TMS9901 sees as if they came from the original keyboard.
 - **Bluetooth LE keyboard input** using the standard ESP32 Bluedroid stack
   - Auto-pairing on first use ("Just Works" bonding)
   - Auto-reconnect after sleep or power cycle
-  - BOOT button enters pairing mode for a new keyboard
+  - **F12** on the keyboard enters pairing mode for a new keyboard
+  - **BOOT button** on the ESP32 is the escape hatch when no working
+    keyboard is available
 - **Status LED** (onboard WS2812) shows connection state
 - **Dual mode**: Both USB and BLE can be enabled simultaneously
 - Maps modern keys (arrows, F-keys, Esc, Tab, etc.) to TI-99/4A
@@ -95,8 +97,14 @@ that input source:
 
 ### Re-pairing a different keyboard
 
-Press the **BOOT button** on the ESP32 dev board. The LED pulses blue while
-in pairing mode (30 seconds), then returns to normal scanning.
+Press **F12** on the currently connected keyboard. The current keyboard
+disconnects, the ESP32 enters pairing mode, the LED pulses blue for 30
+seconds, and any HID keyboard in pairing mode during that window will be
+adopted as the new peer.
+
+If the current keyboard is broken, lost, or unavailable, press the **BOOT
+button** on the ESP32 dev board instead. It does the same thing as F12 and
+exists as a hardware escape hatch for the "no working keyboard" case.
 
 ### LED Status
 
@@ -118,15 +126,45 @@ Most keys map directly. Special mappings via the host's Alt key
 | Alt | FCTN |
 | Ctrl | CTRL |
 | Shift | SHIFT |
-| Caps Lock | Alpha Lock (toggle) |
+| Caps Lock | Alpha Lock (software-emulated; see below) |
 | Esc | FCTN+9 (BACK) |
 | Backspace | FCTN+S |
 | Tab | FCTN+7 |
 | Delete | FCTN+1 |
 | Arrows | FCTN+E/X/S/D |
-| F1–F10 | FCTN+1 through FCTN+0 |
+| F1 | FCTN+1 |
+| F2 | FCTN+2 |
+| F3 | FCTN+3 |
+| F4 | FCTN+4 (CLEAR) |
+| F5 | FCTN+5 (BEGIN) |
+| F6 | FCTN+6 (PROC'D) |
+| F7 | FCTN+7 (AID) |
+| F8 | FCTN+8 (REDO) |
+| F9 | FCTN+9 (BACK) |
+| F10 | FCTN+0 |
+| F11 | (unmapped, reserved) |
+| F12 | Enter BLE pairing mode (not forwarded to TI) |
 | / | FCTN+I |
 | - | FCTN+U |
+
+The F-key shortcuts let you press the standard TI FCTN+digit combos with a
+single key on the modern keyboard, instead of holding Alt and a digit at
+the same time.
+
+### Alpha Lock and joystick compatibility
+
+The original TI-99/4A has a notorious hardware bug: the Alpha Lock key
+shares an electrical signal with joystick UP, so any game played with
+Alpha Lock engaged sees a permanent UP input. The classic fix was to
+physically pop the Alpha Lock key out of its socket before playing.
+
+This adapter sidesteps the bug entirely by implementing Alpha Lock in
+software. When Caps Lock is on, the adapter automatically injects SHIFT
+into letter keypresses (producing capital letters via the normal KSCAN
+path), and **never drives the dedicated Alpha Lock line on the keyboard
+connector**. Joysticks therefore work correctly regardless of Caps Lock
+state. Numbers and punctuation are unaffected by Caps Lock, matching the
+original Alpha Lock semantics.
 
 ## Status
 

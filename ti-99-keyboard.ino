@@ -31,7 +31,12 @@
  *     GPIO 13 -> INT7  (row 7)
  *
  *   Alpha Lock output:
- *     GPIO 14 -> P5 / Alpha Lock line
+ *     GPIO 14 -> P5 / Alpha Lock line (intentionally NEVER driven —
+ *                Alpha Lock is implemented in software by injecting
+ *                SHIFT on letter keys when caps lock is on. This avoids
+ *                the original TI's Alpha-Lock-vs-joystick-UP hardware
+ *                bug. The pin remains as INPUT for the life of the
+ *                sketch.)
  *
  * Board settings (Arduino IDE):
  *   Board: "ESP32S3 Dev Module"
@@ -56,6 +61,7 @@
 #ifdef INPUT_BLE
 #include <BLEDevice.h>
 #include <BLESecurity.h>
+#include <Preferences.h>
 #endif
 
 // ---------------------------------------------------------------------------
@@ -246,6 +252,8 @@ static volatile bool alphaLockActive = false;
 #define HID_KEY_F8         0x41
 #define HID_KEY_F9         0x42
 #define HID_KEY_F10        0x43
+#define HID_KEY_F11        0x44
+#define HID_KEY_F12        0x45
 #define HID_KEY_RIGHT      0x4F
 #define HID_KEY_LEFT       0x50
 #define HID_KEY_DOWN       0x51
@@ -361,6 +369,84 @@ static const SpecialKeyMapping specialKeys[] =
 // ---------------------------------------------------------------------------
 static uint8_t prevKeys[6] = {0};
 
+// Set by processHidReport when F12 is first pressed; consumed by bleTask
+// in the main loop, since BLE stack calls are not safe from a notify
+// callback context.
+static volatile bool blePairingRequested = false;
+
+// Debug helper: convert a HID scancode + effective shift state into a
+// human-readable character (or label) for the matrix debug print.
+static const char *hidKeyToDebugChar(uint8_t k, bool shift)
+{
+  static char buf[2] = {0, 0};
+
+  // Letters
+  if (k >= HID_KEY_A && k <= HID_KEY_Z)
+  {
+    buf[0] = shift ? ('A' + (k - HID_KEY_A)) : ('a' + (k - HID_KEY_A));
+    return buf;
+  }
+
+  // Top-row numbers and their shifted symbols (US layout)
+  static const char numUnshift[] = "1234567890";
+  static const char numShift[]   = "!@#$%^&*()";
+  if (k >= HID_KEY_1 && k <= HID_KEY_0)
+  {
+    buf[0] = shift ? numShift[k - HID_KEY_1] : numUnshift[k - HID_KEY_1];
+    return buf;
+  }
+
+  // Punctuation and common control keys
+  switch (k)
+  {
+    case 0x28: return "<ENTER>";
+    case 0x29: return "<ESC>";
+    case 0x2A: return "<BKSP>";
+    case 0x2B: return "<TAB>";
+    case 0x2C: return " ";
+    case 0x2D: buf[0] = shift ? '_' : '-'; return buf;
+    case 0x2E: buf[0] = shift ? '+' : '='; return buf;
+    case 0x2F: buf[0] = shift ? '{' : '['; return buf;
+    case 0x30: buf[0] = shift ? '}' : ']'; return buf;
+    case 0x31: buf[0] = shift ? '|' : '\\'; return buf;
+    case 0x33: buf[0] = shift ? ':' : ';'; return buf;
+    case 0x34: buf[0] = shift ? '"' : '\''; return buf;
+    case 0x35: buf[0] = shift ? '~' : '`'; return buf;
+    case 0x36: buf[0] = shift ? '<' : ','; return buf;
+    case 0x37: buf[0] = shift ? '>' : '.'; return buf;
+    case 0x38: buf[0] = shift ? '?' : '/'; return buf;
+    case 0x39: return "<CAPS>";
+    case 0x4F: return "<RIGHT>";
+    case 0x50: return "<LEFT>";
+    case 0x51: return "<DOWN>";
+    case 0x52: return "<UP>";
+  }
+
+  // Function keys F1..F12. F1..F10 become FCTN+1..FCTN+0 on the TI;
+  // F12 triggers BLE pairing mode and is not forwarded to the TI.
+  if (k >= HID_KEY_F1 && k <= HID_KEY_F12)
+  {
+    static char fbuf[4];
+    int n = (k - HID_KEY_F1) + 1;  // F1..F12
+    if (n < 10)
+    {
+      fbuf[0] = 'F';
+      fbuf[1] = '0' + n;
+      fbuf[2] = 0;
+    }
+    else
+    {
+      fbuf[0] = 'F';
+      fbuf[1] = '1';
+      fbuf[2] = '0' + (n - 10);
+      fbuf[3] = 0;
+    }
+    return fbuf;
+  }
+
+  return "?";
+}
+
 void processHidReport(const uint8_t *report, int len)
 {
   if (len < 8)
@@ -370,6 +456,22 @@ void processHidReport(const uint8_t *report, int len)
 
   uint8_t modifiers = report[0];
   const uint8_t *keys = &report[2];
+
+  // F12 → enter BLE pairing mode (edge-triggered, not forwarded to TI).
+  // We only act on the press edge (F12 in current report but not previous),
+  // and we set a flag for bleTask to consume — calling BLE stack functions
+  // from inside the BLE notify callback context is unsafe.
+  bool f12Now = false;
+  bool f12Prev = false;
+  for (int i = 0; i < 6; i++)
+  {
+    if (keys[i] == HID_KEY_F12) f12Now = true;
+    if (prevKeys[i] == HID_KEY_F12) f12Prev = true;
+  }
+  if (f12Now && !f12Prev)
+  {
+    blePairingRequested = true;
+  }
 
   // Clear all key state and rebuild from current report
   memset((void *)keyState, 0, sizeof(keyState));
@@ -444,6 +546,17 @@ void processHidReport(const uint8_t *report, int len)
     if (k < MAP_SIZE && hidToTi[k].col != 0xFF)
     {
       keyState[hidToTi[k].col] |= hidToTi[k].row;
+
+      // Software Alpha Lock: force SHIFT on letters when caps lock is on.
+      // We never drive the dedicated Alpha Lock line — that line shares
+      // the joystick UP signal on the original TI, and asserting it
+      // permanently breaks joystick reads. By emulating Alpha Lock as
+      // "letters get shifted," we get capital letters without ever
+      // touching PIN_ALPHA_LOCK, so joysticks keep working.
+      if (alphaLockActive && k >= HID_KEY_A && k <= HID_KEY_Z)
+      {
+        keyState[TI_SHIFT_COL] |= TI_SHIFT_ROW;
+      }
     }
   }
 
@@ -460,6 +573,47 @@ void processHidReport(const uint8_t *report, int len)
   if (anyKeyPressed)
   {
     keypressTime = millis();
+  }
+
+  // DEBUG: print TI matrix state when it changes
+  static uint8_t lastPrintedState[6] = {0, 0, 0, 0, 0, 0};
+  static bool lastPrintedAlpha = false;
+  if (memcmp((const void *)keyState, lastPrintedState, 6) != 0 ||
+      alphaLockActive != lastPrintedAlpha)
+  {
+    // Find the primary (first non-zero) HID key in the current report
+    uint8_t primaryKey = 0;
+    for (int i = 0; i < 6; i++)
+    {
+      if (keys[i] != 0 && keys[i] != HID_KEY_CAPSLOCK)
+      {
+        primaryKey = keys[i];
+        break;
+      }
+    }
+
+    // Compute effective shift: physical shift OR alpha-lock-on-letter
+    bool shiftHeld = (modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT)) != 0;
+    bool effectiveShift = shiftHeld;
+    if (alphaLockActive && primaryKey >= HID_KEY_A && primaryKey <= HID_KEY_Z)
+    {
+      effectiveShift = true;
+    }
+
+    const char *charStr = (primaryKey == 0)
+                            ? "(release)"
+                            : hidKeyToDebugChar(primaryKey, effectiveShift);
+
+    // Pad the key label to a fixed width so the matrix bytes always
+    // start in the same column. Longest expected label is "(release)"
+    // at 9 characters; everything else is shorter and gets right-padded.
+    Serial.printf("TI key %-9s  C0=%02X C1=%02X C2=%02X C3=%02X C4=%02X C5=%02X  alpha=%d\n",
+                  charStr,
+                  keyState[0], keyState[1], keyState[2],
+                  keyState[3], keyState[4], keyState[5],
+                  alphaLockActive ? 1 : 0);
+    memcpy(lastPrintedState, (const void *)keyState, 6);
+    lastPrintedAlpha = alphaLockActive;
   }
 
   memcpy(prevKeys, keys, 6);
@@ -502,6 +656,15 @@ static volatile bool bleReady = false;
 static volatile bool bleDoConnect = false;
 static volatile bool bleDoScan = false;
 
+static Preferences blePrefs;
+static String savedAddress = "";
+static const char *NVS_NAMESPACE = "ti99kb";
+static const char *NVS_KEY_ADDR = "peer_addr";
+
+static volatile bool blePairingMode = false;
+static unsigned long blePairingDeadline = 0;
+#define BLE_PAIRING_WINDOW_MS 30000UL
+
 #define PIN_BOOT_BUTTON 0
 
 // Notification callback — receives HID key reports
@@ -532,7 +695,7 @@ class BleClientCallbacks : public BLEClientCallbacks
     bleConnected = false;
     bleReady = false;
     memset((void *)keyState, 0, sizeof(keyState));
-    setLedState(LED_SCANNING);
+    setLedState(blePairingMode ? LED_STARTUP : LED_SCANNING);
     bleDoScan = true;
   }
 };
@@ -602,8 +765,21 @@ bool bleConnectToServer()
   }
 
   bleReady = true;
+  blePairingMode = false;
   setLedState(LED_CONNECTED);
   Serial.printf("BLE: Ready. %d input report(s).\n", subscribed);
+
+  // Persist peer address for fast reconnect on next boot
+  String connectedAddr = pTargetDevice->getAddress().toString();
+  if (connectedAddr != savedAddress)
+  {
+    savedAddress = connectedAddr;
+    blePrefs.begin(NVS_NAMESPACE, false);
+    blePrefs.putString(NVS_KEY_ADDR, savedAddress);
+    blePrefs.end();
+    Serial.printf("BLE: Saved peer address %s\n", savedAddress.c_str());
+  }
+
   return true;
 }
 
@@ -616,11 +792,10 @@ class BleScanCallbacks : public BLEAdvertisedDeviceCallbacks
     String name = advertisedDevice.getName();
     bool isHid = advertisedDevice.haveServiceUUID() &&
                  advertisedDevice.isAdvertisingService(hidServiceUUID);
-    bool isKnown = addr.startsWith("f4:ee:25:") ||
-                   (name.indexOf("L75") >= 0) ||
-                   (name.indexOf("BT5.0") >= 0);
+    bool isKnownPeer = (savedAddress.length() > 0) &&
+                       addr.equalsIgnoreCase(savedAddress);
 
-    if (isHid || isKnown)
+    if (isHid || isKnownPeer)
     {
       Serial.printf("BLE: Found keyboard: %s (%s)\n",
                     name.c_str(), addr.c_str());
@@ -640,6 +815,19 @@ class BleScanCallbacks : public BLEAdvertisedDeviceCallbacks
 
 void bleInit()
 {
+  // Load previously bonded peer address from NVS, if any
+  blePrefs.begin(NVS_NAMESPACE, true);
+  savedAddress = blePrefs.getString(NVS_KEY_ADDR, "");
+  blePrefs.end();
+  if (savedAddress.length() > 0)
+  {
+    Serial.printf("BLE: Known peer %s\n", savedAddress.c_str());
+  }
+  else
+  {
+    Serial.println("BLE: No known peer, will pair with first HID keyboard.");
+  }
+
   BLEDevice::init("TI99-KB");
 
   BLESecurity *pSecurity = new BLESecurity();
@@ -660,8 +848,60 @@ void bleInit()
   setLedState(LED_SCANNING);
 }
 
+// Enter BLE pairing mode: forget current peer, disconnect, and scan for
+// any HID keyboard for the next BLE_PAIRING_WINDOW_MS milliseconds.
+// Called by both the BOOT button and the F12 keyboard shortcut.
+void bleEnterPairingMode()
+{
+  Serial.println("BLE: Entering pairing mode (30s).");
+
+  blePairingMode = true;
+  blePairingDeadline = millis() + BLE_PAIRING_WINDOW_MS;
+
+  // Forget the previously bonded peer so a new keyboard can be paired
+  savedAddress = "";
+  blePrefs.begin(NVS_NAMESPACE, false);
+  blePrefs.remove(NVS_KEY_ADDR);
+  blePrefs.end();
+
+  // Disconnect any current client (handler will clean up state)
+  if (pClient != nullptr && pClient->isConnected())
+  {
+    Serial.println("BLE: Disconnecting current peer...");
+    pClient->disconnect();
+    delay(200);  // brief wait for disconnect callback to fire
+  }
+
+  // NOTE: Arduino-ESP32 3.3.7's BLE library does not expose bond
+  // management to sketch code (no removeBond / getBondedDevices in the
+  // public API), and the underlying esp_ble_* GAP headers are not in
+  // the sketch include path. Bonds will accumulate in NVS until the
+  // bond store rotates them out. A future port to NimBLE-Arduino would
+  // give us NimBLEDevice::deleteAllBonds() to fix this cleanly.
+
+  // Don't start a long scan here — that blocks the loop. Just stop any
+  // running scan and let the regular 5s scanning-while-disconnected
+  // block run repeatedly with blePairingMode still set, until either a
+  // keyboard pairs or the 30s deadline expires.
+  BLEScan *pScan = BLEDevice::getScan();
+  pScan->stop();
+  pScan->clearResults();
+  setLedState(LED_STARTUP);
+  bleDoScan = true;
+
+  Serial.println("BLE: Pairing scan started.");
+}
+
 void bleTask()
 {
+  // F12 pairing-mode request from processHidReport (HID notify context)
+  if (blePairingRequested)
+  {
+    blePairingRequested = false;
+    Serial.println("BLE: F12 pressed — entering pairing mode.");
+    bleEnterPairingMode();
+  }
+
   // Connect to device found during scan
   if (bleDoConnect)
   {
@@ -672,53 +912,38 @@ void bleTask()
     }
   }
 
+  // Pairing mode timeout
+  if (blePairingMode && millis() > blePairingDeadline)
+  {
+    Serial.println("BLE: Pairing window expired.");
+    blePairingMode = false;
+  }
+
   // Keep scanning while disconnected
   if (!bleConnected && bleDoScan)
   {
     bleDoScan = false;
-    setLedState(LED_SCANNING);
+    setLedState(blePairingMode ? LED_STARTUP : LED_SCANNING);
     BLEScan *pScan = BLEDevice::getScan();
     pScan->clearResults();
     pScan->start(5, false);
     bleDoScan = true;
   }
 
-  // BOOT button — clear bonds and rescan for new keyboard
-  if (digitalRead(PIN_BOOT_BUTTON) == LOW && !bleReady)
+  // BOOT button — escape hatch when no working keyboard is available
+  if (digitalRead(PIN_BOOT_BUTTON) == LOW)
   {
     delay(50);
     if (digitalRead(PIN_BOOT_BUTTON) == LOW)
     {
-      Serial.println("BLE: Pairing mode...");
+      bleEnterPairingMode();
 
-      if (pClient != nullptr && pClient->isConnected())
-      {
-        pClient->disconnect();
-      }
-
-      BLEDevice::deinit(true);
-      delay(500);
-      BLEDevice::init("TI99-KB");
-
-      BLESecurity *pSec = new BLESecurity();
-      pSec->setCapability(ESP_IO_CAP_NONE);
-      pSec->setAuthenticationMode(true, false, true);
-      BLEDevice::setSecurityCallbacks(new BLESecurityCallbacks());
-
-      BLEScan *pScan = BLEDevice::getScan();
-      pScan->setAdvertisedDeviceCallbacks(new BleScanCallbacks());
-      pScan->setInterval(1349);
-      pScan->setWindow(449);
-      pScan->setActiveScan(true);
-
-      setLedState(LED_STARTUP);
-      pScan->start(30, false);
-      bleDoScan = true;
-
+      // Wait for button release so we don't re-trigger immediately
       while (digitalRead(PIN_BOOT_BUTTON) == LOW)
       {
         delay(50);
       }
+      Serial.println("BLE: Button released.");
     }
   }
 }
@@ -764,15 +989,9 @@ static inline void updateRowOutputs()
     }
   }
 
-  if (alphaLockActive)
-  {
-    pinMode(PIN_ALPHA_LOCK, OUTPUT);
-    digitalWrite(PIN_ALPHA_LOCK, LOW);
-  }
-  else
-  {
-    pinMode(PIN_ALPHA_LOCK, INPUT);
-  }
+  // PIN_ALPHA_LOCK is intentionally never driven. See processHidReport
+  // for the software Alpha Lock implementation. Driving the original
+  // Alpha Lock line breaks joystick UP on unmodified TI-99/4A consoles.
 }
 
 // ---------------------------------------------------------------------------
