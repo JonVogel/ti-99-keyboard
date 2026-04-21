@@ -1084,3 +1084,42 @@ CAT DSK1
 Phase 2 limits: DIS/VAR only. PROGRAM format (for SAVE/OLD on DSK),
 INTERNAL, FIXED, APPEND, and UPDATE are Phase 3.
 
+
+=== 37. PROGRAM format — OLD / SAVE on .dsk images (Phase 3) ===
+
+--- Part A: SAVE a program to DSK ---
+MOUNT DSK1 SDCARD.WORK.DSK
+NEW
+10 PRINT "HELLO FROM DSK"
+20 FOR I=1 TO 3
+30 PRINT I
+40 NEXT I
+50 END
+SAVE "DSK1.SAMPLE"
+(Expected: `SAVED: DSK1.SAMPLE (N bytes)`)
+CAT DSK1
+(Expected: `SAMPLE  PROGRAM  N` in the listing.)
+
+--- Part B: reload it ---
+NEW
+LIST
+(Expected: empty listing.)
+OLD "DSK1.SAMPLE"
+(Expected: `LOADED: DSK1.SAMPLE (5 lines)`)
+LIST
+(Expected: all 5 lines intact.)
+RUN
+(Expected: `HELLO FROM DSK` then 1, 2, 3.)
+
+--- Part C: load a real TI PROGRAM file ---
+MOUNT DSK2 SDCARD.disk1.dsk
+CAT DSK2
+(Find a small PROGRAM file, e.g. LOAD on DSKUTILS.)
+OLD "DSK2.LOAD"
+LIST
+(Expected: the LOAD utility's BASIC source rendered through our
+detokenizer. Some lines may show weirdness if TI used features we
+don't yet support, but the token stream should round-trip.)
+
+Phase 3 limits: PROGRAM only. INTERNAL and FIXED file types deferred.
+

@@ -338,6 +338,15 @@ static bool isLineRefToken(uint8_t tok)
          tok == TOK_UNBREAK || tok == TOK_RES  || tok == TOK_ERROR;
 }
 
+// Keywords that accept a single file-spec argument where the lexer
+// should treat the remainder of the statement as one opaque string
+// (TI-style: OLD DSK1.NAME does NOT need quotes).
+static bool isFilenameKwToken(uint8_t tok)
+{
+  return tok == TOK_OLD   || tok == TOK_SAVE  ||
+         tok == TOK_MERGE || tok == TOK_DELETE;
+}
+
 static int tokenizeLine(const char* src, uint8_t* tokens, int maxLen)
 {
   int pos = 0;
@@ -517,6 +526,37 @@ static int tokenizeLine(const char* src, uint8_t* tokens, int maxLen)
       tokens[out++] = emitted;
       pos += strlen(keywords[kwIdx].text);
       expectLineNum = isLineRefToken(emitted);
+
+      // OLD / SAVE / MERGE / DELETE treat the rest of the statement as
+      // a file-spec string, so `OLD DSK1.NAME` works without quotes
+      // (TI behavior). If the user did quote it, skip — the normal
+      // quoted-string branch above will have fired next iteration.
+      if (isFilenameKwToken(emitted))
+      {
+        int sp = pos;
+        while (src[sp] == ' ') sp++;
+        if (src[sp] != '"' && src[sp] != '\0' &&
+            src[sp] != ':' && src[sp] != '!')
+        {
+          int start = sp;
+          while (src[sp] != '\0' && src[sp] != ':' && src[sp] != '!')
+          {
+            sp++;
+          }
+          // Trim trailing spaces
+          int end = sp;
+          while (end > start && src[end - 1] == ' ') end--;
+          int slen = end - start;
+          if (slen > 0 && out + 2 + slen < maxLen)
+          {
+            tokens[out++] = TOK_QUOTED_STR;
+            tokens[out++] = (uint8_t)slen;
+            memcpy(&tokens[out], &src[start], slen);
+            out += slen;
+          }
+          pos = sp;
+        }
+      }
       continue;
     }
 
@@ -1953,8 +1993,181 @@ static void cmdBye()
   ESP.restart();
 }
 
+// Parse TI PROGRAM-file bytes and load each line into the ExecManager.
+// File layout (big-endian words) — verified against real TI XB images:
+//   0-1  : XOR checksum (ignored on load)
+//   2-3  : LNT top — highest VDP address of the line-number table
+//   4-5  : LNT bottom — lowest VDP address of the LNT (first entry)
+//   6-7  : program top — highest VDP address used by the program text
+// After the 8-byte header the file is a verbatim VDP-memory image
+// starting at lntBot and running through progTop. VDP address A maps
+// to file offset 8 + (A - lntBot).
+// LNT storage is low-to-high in memory but sorted *descending* by line
+// number. Each 4-byte entry: [line hi][line lo][tok-ptr hi][tok-ptr lo].
+// Each program line's tokens: [length byte][length bytes of tokens].
+static bool loadProgramBytes(const uint8_t* buf, int size)
+{
+  if (size < 12) return false;
+  uint16_t lntTop  = ((uint16_t)buf[2] << 8) | buf[3];
+  uint16_t lntBot  = ((uint16_t)buf[4] << 8) | buf[5];
+  uint16_t progTop = ((uint16_t)buf[6] << 8) | buf[7];
+  if (lntBot > lntTop || progTop < lntTop) return false;
+
+  auto vdp2file = [&](uint16_t addr) -> int
+  {
+    if (addr < lntBot || addr > progTop) return -1;
+    int off = 8 + (int)(addr - lntBot);
+    return (off < size) ? off : -1;
+  };
+
+  em.clearProgram();
+
+  for (uint16_t ent = lntBot; ent + 3 <= lntTop; ent += 4)
+  {
+    int off = vdp2file(ent);
+    if (off < 0 || off + 4 > size) break;
+    uint16_t lineNum = ((uint16_t)buf[off] << 8) | buf[off + 1];
+    uint16_t tokPtr  = ((uint16_t)buf[off + 2] << 8) | buf[off + 3];
+    // TI stores each line as: [length byte][tokens...][0x00].
+    // The LNT pointer points to the FIRST token, one byte past the
+    // length. So length is at tokPtr - 1.
+    int tokOff = vdp2file(tokPtr);
+    if (tokOff < 1 || tokOff >= size) continue;
+    uint8_t len = buf[tokOff - 1];
+    if (len == 0 || tokOff + len > size) continue;
+    // Some TI writers store length including the trailing 0x00; others
+    // don't. Strip a trailing 0x00 if present to keep our token stream
+    // internally consistent (we'll add our own TOK_EOL).
+    int copyLen = len;
+    if (copyLen > 0 && buf[tokOff + copyLen - 1] == 0x00) copyLen--;
+    if (copyLen + 1 > MAX_LINE_TOKENS) continue;
+
+    uint8_t lineToks[MAX_LINE_TOKENS];
+    memcpy(lineToks, &buf[tokOff], copyLen);
+    lineToks[copyLen] = TOK_EOL;
+    em.storeLine(lineNum, lineToks, copyLen + 1);
+  }
+  return em.programSize() > 0;
+}
+
+// Serialize the current program into a PROGRAM-format byte stream
+// matching the layout parsed above. Returns number of bytes written.
+// Caller supplies a buffer large enough to hold all tokens + LNT + header
+// (typical small XB programs are well under 4 KB).
+static int saveProgramBytes(uint8_t* buf, int bufSize)
+{
+  int n = em.programSize();
+  if (n <= 0) return 0;
+
+  // Compute sizes first. TI line format = [length][tokens...][0x00], so
+  // each line consumes 2 + tok_count bytes.
+  int textSize = 0;
+  for (int i = 0; i < n; i++)
+  {
+    ProgramLine* line = em.getLine(i);
+    int len = line->length;
+    if (len > 0 && line->tokens[len - 1] == TOK_EOL) len--;
+    textSize += 2 + len;
+  }
+  int lntSize = n * 4;
+  int total = 8 + textSize + lntSize;
+  if (total > bufSize) return -1;
+
+  // Layout the file VDP-image starting at lntBot = 0x0008 (maps to
+  // file offset 8 after the header). LNT goes first (low VDP), then
+  // program text.
+  uint16_t lntBot   = 0x0008;
+  uint16_t lntTop   = lntBot + lntSize - 1;
+  uint16_t textBase = lntTop + 1;
+  uint16_t progTop  = textBase + textSize - 1;
+
+  // Header: cksum, LNT top, LNT bottom, program top (all big-endian).
+  uint16_t cksum = lntTop ^ lntBot ^ progTop;
+  buf[0] = (cksum   >> 8) & 0xFF; buf[1] = cksum   & 0xFF;
+  buf[2] = (lntTop  >> 8) & 0xFF; buf[3] = lntTop  & 0xFF;
+  buf[4] = (lntBot  >> 8) & 0xFF; buf[5] = lntBot  & 0xFF;
+  buf[6] = (progTop >> 8) & 0xFF; buf[7] = progTop & 0xFF;
+
+  // Write program text into position starting at file offset 8 + lntSize.
+  // TI convention: each line is stored as [length][tokens...][0x00];
+  // the LNT pointer points to the FIRST TOKEN (past the length byte).
+  int textFileOff = 8 + lntSize;
+  uint16_t textWrite = textBase;
+  uint16_t* linePtrs = (uint16_t*)malloc(sizeof(uint16_t) * n);
+  if (!linePtrs) return -1;
+  int off = textFileOff;
+  for (int i = 0; i < n; i++)
+  {
+    ProgramLine* line = em.getLine(i);
+    int len = line->length;
+    if (len > 0 && line->tokens[len - 1] == TOK_EOL) len--;
+    buf[off++] = (uint8_t)(len + 1);   // length includes trailing 0x00
+    linePtrs[i] = textWrite + 1;       // pointer skips the length byte
+    memcpy(&buf[off], line->tokens, len);
+    off += len;
+    buf[off++] = 0x00;                 // TI-style terminator
+    textWrite += 2 + len;
+  }
+
+  // Write LNT at file offset 8, sorted descending by line number to
+  // match TI convention (LNT grows downward in VDP as lines are added).
+  int lntOff = 8;
+  for (int i = n - 1; i >= 0; i--)
+  {
+    ProgramLine* line = em.getLine(i);
+    buf[lntOff++] = (line->lineNum >> 8) & 0xFF;
+    buf[lntOff++] = line->lineNum & 0xFF;
+    buf[lntOff++] = (linePtrs[i] >> 8) & 0xFF;
+    buf[lntOff++] = linePtrs[i] & 0xFF;
+  }
+
+  free(linePtrs);
+  return total;
+}
+
+// Detect DSK<n>.NAME → return drive 1..35 and the TI filename.
+// Returns 0 if not a DSK spec.
+static int parseDskFileSpec(const char* in, char* nameOut, int nameSize)
+{
+  if (strncasecmp(in, "DSK", 3) != 0) return 0;
+  int drive = fio::driveFromChar(in[3]);
+  if (drive == 0 || in[4] != '.') return 0;
+  snprintf(nameOut, nameSize, "%s", in + 5);
+  return drive;
+}
+
 static void cmdSave(const char* filename)
 {
+  char tiName[16];
+  int drive = parseDskFileSpec(filename, tiName, sizeof(tiName));
+  if (drive > 0)
+  {
+    dsk::DskImage* img = fio::dskImage(drive);
+    if (!img) { printError("* NOT MOUNTED"); return; }
+    if (img->readOnly()) { printError("* WRITE PROTECTED"); return; }
+    uint8_t* progBuf = (uint8_t*)malloc(8192);
+    if (!progBuf) { printError("* OUT OF MEMORY"); return; }
+    int size = saveProgramBytes(progBuf, 8192);
+    if (size <= 0)
+    {
+      free(progBuf);
+      printError("* PROGRAM TOO BIG");
+      return;
+    }
+    bool ok = img->writeRawFile(tiName, progBuf, size, 0x01);
+    free(progBuf);
+    if (!ok)
+    {
+      printError("* FILE ERROR");
+      return;
+    }
+    char msg[48];
+    snprintf(msg, sizeof(msg), "SAVED: DSK%c.%s (%d bytes)",
+             fio::driveToChar(drive), tiName, size);
+    printLine(msg);
+    return;
+  }
+
   char path[48];
   snprintf(path, sizeof(path), "/%s.bas", filename);
   File f = LittleFS.open(path, "w");
@@ -1981,6 +2194,45 @@ static void cmdSave(const char* filename)
 
 static void cmdOld(const char* filename)
 {
+  char tiName[16];
+  int drive = parseDskFileSpec(filename, tiName, sizeof(tiName));
+  if (drive > 0)
+  {
+    dsk::DskImage* img = fio::dskImage(drive);
+    if (!img) { printError("* NOT MOUNTED"); return; }
+    uint8_t* progBuf = (uint8_t*)malloc(8192);
+    if (!progBuf) { printError("* OUT OF MEMORY"); return; }
+    int size = img->readRawFile(tiName, progBuf, 8192);
+    if (size < 12)
+    {
+      free(progBuf);
+      printError("* FILE ERROR");
+      return;
+    }
+    // Dump the first 16 bytes on failure so we can decode the header.
+    bool ok = loadProgramBytes(progBuf, size);
+    if (!ok)
+    {
+      Serial.print("PROGRAM header:");
+      for (int i = 0; i < 16 && i < size; i++)
+      {
+        Serial.printf(" %02X", progBuf[i]);
+      }
+      Serial.println();
+    }
+    free(progBuf);
+    if (!ok)
+    {
+      printError("* BAD PROGRAM");
+      return;
+    }
+    char msg[48];
+    snprintf(msg, sizeof(msg), "LOADED: DSK%c.%s (%d lines)",
+             fio::driveToChar(drive), tiName, em.programSize());
+    printLine(msg);
+    return;
+  }
+
   char path[48];
   snprintf(path, sizeof(path), "/%s.bas", filename);
   File f = LittleFS.open(path, "r");

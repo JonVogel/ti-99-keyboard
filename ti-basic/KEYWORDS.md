@@ -194,4 +194,4 @@ Status legend:
 | `tokenNames[256]` O(1) detokenize  |  ✅  |  ✅  | ASCII bytes + keyword tokens unified    |
 | 800×480 new-board port             |  ✅  |  ✅  | ESP32-8048S043C, 32×24 @ 16×16 chars    |
 | ~~ OTG version preserved ~~        |  ✅  |  ✅  | Frozen in `ti-basic-otg/`               |
-| V9T9 `.dsk` image support          |  ✅  |      | MOUNT / UNMOUNT / NEWDISK / COPY; FLASH or SDCARD; read + write DIS/VAR (Phase 1+2); PROGRAM deferred |
+| V9T9 `.dsk` image support          |  ✅  |  ✅  | MOUNT/UNMOUNT/NEWDISK/COPY/OLD/SAVE; FLASH or SDCARD; DIS/VAR + PROGRAM; loads real TI archives |

@@ -683,6 +683,130 @@ namespace dsk
       return true;
     }
 
+    // --- Raw (PROGRAM / INT FIX / etc.) file I/O ---
+
+    // Read a whole file's bytes into buf. Returns size read (>=0) or -1
+    // on error. Caller sizes the buffer.
+    int readRawFile(const char* name, uint8_t* buf, int bufSize)
+    {
+      FileInfo info;
+      if (!findFile(name, info)) return -1;
+      int byteCount = info.sectorCount * SECTOR_SIZE;
+      if (info.eofOffset != 0 && info.sectorCount > 0)
+      {
+        byteCount = (info.sectorCount - 1) * SECTOR_SIZE + info.eofOffset;
+      }
+      if (byteCount > bufSize) return -1;
+      int off = 0;
+      for (uint16_t i = 0; i < info.sectorCount && off < byteCount; i++)
+      {
+        uint8_t sbuf[SECTOR_SIZE];
+        if (!readSector(info.sectors[i], sbuf)) return -1;
+        int want = byteCount - off;
+        if (want > SECTOR_SIZE) want = SECTOR_SIZE;
+        memcpy(&buf[off], sbuf, want);
+        off += want;
+      }
+      return byteCount;
+    }
+
+    // Write buf as a new file of the given type flags (e.g. 0x01 for
+    // PROGRAM). Overwrites any existing file of this name.
+    bool writeRawFile(const char* name, const uint8_t* buf, int size,
+                      uint8_t typeFlags)
+    {
+      if (m_ro) return false;
+      if (!deleteFile(name)) return false;
+
+      uint8_t vib[SECTOR_SIZE];
+      if (!loadVib(vib)) return false;
+
+      uint16_t fdrSec = findFreeSector(vib);
+      if (fdrSec == 0) return false;
+      setAlloc(vib, fdrSec, true);
+      if (!writeSector(0, vib)) return false;
+
+      int sectorsNeeded = (size + SECTOR_SIZE - 1) / SECTOR_SIZE;
+      if (sectorsNeeded == 0) sectorsNeeded = 1;
+      uint16_t dataSecs[128];
+      if (sectorsNeeded > 128) return false;
+
+      if (!loadVib(vib)) return false;
+      for (int i = 0; i < sectorsNeeded; i++)
+      {
+        uint16_t s = findFreeSector(vib);
+        if (s == 0) return false;
+        setAlloc(vib, s, true);
+        dataSecs[i] = s;
+      }
+      if (!writeSector(0, vib)) return false;
+
+      uint8_t secBuf[SECTOR_SIZE];
+      int written = 0;
+      for (int i = 0; i < sectorsNeeded; i++)
+      {
+        memset(secBuf, 0, SECTOR_SIZE);
+        int n = size - written;
+        if (n > SECTOR_SIZE) n = SECTOR_SIZE;
+        if (n > 0) memcpy(secBuf, &buf[written], n);
+        if (!writeSector(dataSecs[i], secBuf)) return false;
+        written += n;
+      }
+
+      // Write FDR
+      uint8_t fdr[SECTOR_SIZE];
+      memset(fdr, 0, SECTOR_SIZE);
+      char padded[11];
+      padName(name, padded);
+      memcpy(fdr, padded, 10);
+      fdr[0x0C] = typeFlags;
+      fdr[0x0E] = (sectorsNeeded >> 8) & 0xFF;
+      fdr[0x0F] = sectorsNeeded & 0xFF;
+      fdr[0x10] = (uint8_t)(size % SECTOR_SIZE);
+      fdr[0x11] = 0;   // no record length for PROGRAM
+      fdr[0x12] = 0; fdr[0x13] = 0;
+
+      // Build cluster chain (consolidate contiguous runs)
+      int off = 0x1C;
+      int i = 0;
+      while (i < sectorsNeeded && off + 3 <= SECTOR_SIZE)
+      {
+        uint16_t start = dataSecs[i];
+        int runLen = 1;
+        while (i + runLen < sectorsNeeded &&
+               dataSecs[i + runLen] == start + runLen) runLen++;
+        uint16_t endOff = i + runLen - 1;
+        fdr[off]     = start & 0xFF;
+        fdr[off + 1] = ((endOff & 0x0F) << 4) | ((start >> 8) & 0x0F);
+        fdr[off + 2] = (endOff >> 4) & 0xFF;
+        off += 3;
+        i += runLen;
+      }
+      if (!writeSector(fdrSec, fdr)) return false;
+
+      // Add directory entry (alphabetic insertion)
+      uint8_t dir[SECTOR_SIZE];
+      if (!readSector(1, dir)) return false;
+      uint8_t other[SECTOR_SIZE];
+      int insertAt = 128;
+      for (int k = 0; k < 128; k++)
+      {
+        uint16_t sec = ((uint16_t)dir[k * 2] << 8) | dir[k * 2 + 1];
+        if (sec == 0) { insertAt = k; break; }
+        if (!readSector(sec, other)) continue;
+        if (memcmp(other, padded, 10) > 0) { insertAt = k; break; }
+      }
+      if (insertAt >= 128) return false;
+      for (int k = 127; k > insertAt; k--)
+      {
+        dir[k * 2]     = dir[(k - 1) * 2];
+        dir[k * 2 + 1] = dir[(k - 1) * 2 + 1];
+      }
+      dir[insertAt * 2]     = (fdrSec >> 8) & 0xFF;
+      dir[insertAt * 2 + 1] = fdrSec & 0xFF;
+      return writeSector(1, dir);
+    }
+
     bool closeDisVarWriter(DisVarWriter& w)
     {
       if (!w.img) return false;
