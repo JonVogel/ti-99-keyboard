@@ -4,3 +4,15 @@ build/
 *.bin
 *.elf
 *.map
+_royalaxe_mac_extract/
+
+# Vendor-supplied demo/example libraries that ship with the 4.3" display
+# board. 300 MB of LVGL / Arduino_GFX samples we never modify.
+ti-basic/4.3inch_ESP32-8048S043/
+ti-basic-otg/4.3inch_ESP32-8048S043/
+
+# Keep the TI Extended BASIC GROM / ROM dumps despite the *.bin rule
+# above — these are reference data, not build output.
+!ti-basic/xb25C.BIN
+!ti-basic/xb25D.BIN
+!ti-basic/xb25G.BIN

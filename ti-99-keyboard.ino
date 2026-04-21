@@ -10,33 +10,34 @@
  *   INPUT_BLE  - Bluetooth Low Energy (BLE) HID keyboard
  *
  * Hardware connections:
- *   ESP32-S3 GPIO  ->  TXS0108E level shifter  ->  TI-99/4A keyboard connector
+ *   ESP32-S3 N16R8 GPIO -> TXS0108E level shifter -> TI-99/4A keyboard connector
  *
- *   Column inputs (active-low, from 74LS156 outputs):
- *     GPIO 4  <- 1Y1 (column 0)
- *     GPIO 5  <- 2Y1 (column 1)
- *     GPIO 6  <- 2Y2 (column 2)
- *     GPIO 7  <- 2Y3 (column 3)
- *     GPIO 15 <- 1Y0 (column 4)
- *     GPIO 16 <- 2Y0 (column 5)
+ *   Two TXS0108E boards sit along the left edge of the ESP32-S3 N16R8
+ *   dev board. TXS#1 uses GPIO 4-18, TXS#2 uses GPIO 9-14. GPIO 46
+ *   (LOG pin) sits in the gap between them and is unused.
  *
- *   Row outputs (active-low, to TMS9901 INT lines):
- *     GPIO 17 -> INT3  (row 0)
- *     GPIO 18 -> INT4  (row 1)
- *     GPIO  8 -> INT5  (row 2)
- *     GPIO  9 -> INT6  (row 3)
- *     GPIO 10 -> INT10 (row 4)
- *     GPIO 11 -> INT8  (row 5)
- *     GPIO 12 -> INT9  (row 6)
- *     GPIO 13 -> INT7  (row 7)
+ *   Each TXS0108E OE pin must be jumpered to ESP32 3V3 to enable.
+ *   Do NOT wire OE to RST.
  *
- *   Alpha Lock output:
- *     GPIO 14 -> P5 / Alpha Lock line (intentionally NEVER driven —
- *                Alpha Lock is implemented in software by injecting
- *                SHIFT on letter keys when caps lock is on. This avoids
- *                the original TI's Alpha-Lock-vs-joystick-UP hardware
- *                bug. The pin remains as INPUT for the life of the
- *                sketch.)
+ *   TI keyboard connector wiring (15-pin header):
+ *
+ *     TI pin  Signal   TXS    Ch    GPIO  Direction
+ *     ------  -------  -----  ----  ----  ----------------
+ *       1     INT5     TXS#1  B8    4     ESP32 -> TI (row)
+ *       2     INT6     TXS#1  B7    5     ESP32 -> TI (row)
+ *       3     INT8     TXS#1  B6    6     ESP32 -> TI (row)
+ *       4     INT4     TXS#1  B5    7     ESP32 -> TI (row)
+ *       5     INT3     TXS#1  B4    15    ESP32 -> TI (row)
+ *       6     P5       ---    ---   ---   (nc, software alpha lock)
+ *       7     INT7     TXS#1  B3    16    ESP32 -> TI (row)
+ *       8     1Y1      TXS#1  B2    17    TI -> ESP32 (col 0)
+ *       9     1Y0      TXS#1  B1    18    TI -> ESP32 (col 4)
+ *      10     INT9     TXS#2  B8    9     ESP32 -> TI (row)
+ *      11     INT10    TXS#2  B7    10    ESP32 -> TI (row)
+ *      12     2Y0      TXS#2  B6    11    TI -> ESP32 (col 5)
+ *      13     2Y1      TXS#2  B5    12    TI -> ESP32 (col 1)
+ *      14     2Y2      TXS#2  B4    13    TI -> ESP32 (col 2)
+ *      15     2Y3      TXS#2  B3    14    TI -> ESP32 (col 3)
  *
  * Board settings (Arduino IDE):
  *   Board: "ESP32S3 Dev Module"
@@ -59,9 +60,7 @@
 #endif
 
 #ifdef INPUT_BLE
-#include <BLEDevice.h>
-#include <BLESecurity.h>
-#include <Preferences.h>
+#include <BleHidHost.h>
 #endif
 
 // ---------------------------------------------------------------------------
@@ -142,23 +141,35 @@ void updateLed()
 // ---------------------------------------------------------------------------
 // GPIO Pin Assignments
 // ---------------------------------------------------------------------------
-#define PIN_COL_1Y1   4
-#define PIN_COL_2Y1   5
-#define PIN_COL_2Y2   6
-#define PIN_COL_2Y3   7
-#define PIN_COL_1Y0  15
-#define PIN_COL_2Y0  16
+// Both TXS0108E boards sit along the left edge of the ESP32-S3 N16R8 dev
+// board. TXS#1 uses GPIO 4-18 (8 channels), TXS#2 uses GPIO 9-14
+// (6 channels). GPIO 46 (LOG pin) sits in the gap and is unused.
+//
+// ESP32 -> TXS#1:  GPIO4=A8, 5=A7, 6=A6, 7=A5, 15=A4, 16=A3, 17=A2, 18=A1
+// ESP32 -> TXS#2:  GPIO9=A8, 10=A7, 11=A6, 12=A5, 13=A4, 14=A3
+//
+// TXS#1 B-side -> TI: B8=pin1, B7=pin2, B6=pin3, B5=pin4, B4=pin5,
+//                      B3=pin7, B2=pin8, B1=pin9   (pin6=P5 nc)
+// TXS#2 B-side -> TI: B8=pin10, B7=pin11, B6=pin12, B5=pin13,
+//                      B4=pin14, B3=pin15
 
-#define PIN_ROW_INT3  17
-#define PIN_ROW_INT4  18
-#define PIN_ROW_INT5   8
-#define PIN_ROW_INT6   9
-#define PIN_ROW_INT10 10
-#define PIN_ROW_INT8  11
-#define PIN_ROW_INT9  12
-#define PIN_ROW_INT7  13
+// Row outputs — ESP32 -> TI via TXS#1 and TXS#2
+#define PIN_ROW_INT5   4   // TXS#1 A8/B8 -> TI pin 1
+#define PIN_ROW_INT6   5   // TXS#1 A7/B7 -> TI pin 2
+#define PIN_ROW_INT8   6   // TXS#1 A6/B6 -> TI pin 3
+#define PIN_ROW_INT4   7   // TXS#1 A5/B5 -> TI pin 4
+#define PIN_ROW_INT3  15   // TXS#1 A4/B4 -> TI pin 5
+#define PIN_ROW_INT7  16   // TXS#1 A3/B3 -> TI pin 7
+#define PIN_ROW_INT9   9   // TXS#2 A8/B8 -> TI pin 10
+#define PIN_ROW_INT10 10   // TXS#2 A7/B7 -> TI pin 11
 
-#define PIN_ALPHA_LOCK 14
+// Column inputs — TI -> ESP32 via TXS#1 and TXS#2
+#define PIN_COL_1Y1   17   // TXS#1 A2/B2 -> TI pin 8  (col 0)
+#define PIN_COL_1Y0   18   // TXS#1 A1/B1 -> TI pin 9  (col 4)
+#define PIN_COL_2Y0   11   // TXS#2 A6/B6 -> TI pin 12 (col 5)
+#define PIN_COL_2Y1   12   // TXS#2 A5/B5 -> TI pin 13 (col 1)
+#define PIN_COL_2Y2   13   // TXS#2 A4/B4 -> TI pin 14 (col 2)
+#define PIN_COL_2Y3   14   // TXS#2 A3/B3 -> TI pin 15 (col 3)
 
 static const int colPins[6] =
 {
@@ -369,11 +380,6 @@ static const SpecialKeyMapping specialKeys[] =
 // ---------------------------------------------------------------------------
 static uint8_t prevKeys[6] = {0};
 
-// Set by processHidReport when F12 is first pressed; consumed by bleTask
-// in the main loop, since BLE stack calls are not safe from a notify
-// callback context.
-static volatile bool blePairingRequested = false;
-
 // Debug helper: convert a HID scancode + effective shift state into a
 // human-readable character (or label) for the matrix debug print.
 static const char *hidKeyToDebugChar(uint8_t k, bool shift)
@@ -447,7 +453,7 @@ static const char *hidKeyToDebugChar(uint8_t k, bool shift)
   return "?";
 }
 
-void processHidReport(const uint8_t *report, int len)
+void processHidReport(const uint8_t *report, size_t len)
 {
   if (len < 8)
   {
@@ -457,10 +463,10 @@ void processHidReport(const uint8_t *report, int len)
   uint8_t modifiers = report[0];
   const uint8_t *keys = &report[2];
 
+#ifdef INPUT_BLE
   // F12 → enter BLE pairing mode (edge-triggered, not forwarded to TI).
-  // We only act on the press edge (F12 in current report but not previous),
-  // and we set a flag for bleTask to consume — calling BLE stack functions
-  // from inside the BLE notify callback context is unsafe.
+  // Flag is consumed on the main loop; calling BLE stack functions from a
+  // notify callback context is unsafe.
   bool f12Now = false;
   bool f12Prev = false;
   for (int i = 0; i < 6; i++)
@@ -470,8 +476,9 @@ void processHidReport(const uint8_t *report, int len)
   }
   if (f12Now && !f12Prev)
   {
-    blePairingRequested = true;
+    BleHidHost::requestPairingMode();
   }
+#endif
 
   // Clear all key state and rebuild from current report
   memset((void *)keyState, 0, sizeof(keyState));
@@ -646,306 +653,58 @@ static TiUsbHost usbHost;
 // ---------------------------------------------------------------------------
 #ifdef INPUT_BLE
 
-static BLEUUID hidServiceUUID((uint16_t)0x1812);
-static BLEUUID reportCharUUID((uint16_t)0x2A4D);
-
-static BLEClient *pClient = nullptr;
-static BLEAdvertisedDevice *pTargetDevice = nullptr;
-static volatile bool bleConnected = false;
-static volatile bool bleReady = false;
-static volatile bool bleDoConnect = false;
-static volatile bool bleDoScan = false;
-
-static Preferences blePrefs;
-static String savedAddress = "";
-static const char *NVS_NAMESPACE = "ti99kb";
-static const char *NVS_KEY_ADDR = "peer_addr";
-
-static volatile bool blePairingMode = false;
-static unsigned long blePairingDeadline = 0;
-#define BLE_PAIRING_WINDOW_MS 30000UL
-
-#define PIN_BOOT_BUTTON 0
-
-// Notification callback — receives HID key reports
-static void bleNotifyCallback(
-  BLERemoteCharacteristic *pChar,
-  uint8_t *pData,
-  size_t length,
-  bool isNotify)
+// HID reports arrive via BleHidHost's callback (notify context). Forward
+// straight into the shared processHidReport, which builds the TI matrix.
+static void bleOnHidReport(const uint8_t *data, size_t len)
 {
-  if (length >= 8)
-  {
-    processHidReport(pData, length);
-  }
+  processHidReport(data, len);
 }
 
-// Client callbacks
-class BleClientCallbacks : public BLEClientCallbacks
+// Track BleHidHost state transitions so the LED and TI matrix stay in sync.
+// We poll once per loop() rather than embed hooks in the BLE callbacks,
+// since those run in BLE stack contexts.
+static void bleUpdateLedAndState()
 {
-  void onConnect(BLEClient *client)
-  {
-    Serial.println("BLE: Connected.");
-    bleConnected = true;
-  }
+  static bool wasConnected = false;
+  static bool wasPairing = false;
 
-  void onDisconnect(BLEClient *client)
+  bool connected = BleHidHost::isReady();
+  bool pairing   = BleHidHost::inPairingMode();
+
+  // Edge: just disconnected — clear TI matrix so no ghost key stays held
+  if (wasConnected && !connected)
   {
-    Serial.println("BLE: Disconnected.");
-    bleConnected = false;
-    bleReady = false;
     memset((void *)keyState, 0, sizeof(keyState));
-    setLedState(blePairingMode ? LED_STARTUP : LED_SCANNING);
-    bleDoScan = true;
-  }
-};
-
-// Connect to keyboard and subscribe to HID input reports
-bool bleConnectToServer()
-{
-  Serial.printf("BLE: Connecting to %s (%s)...\n",
-                pTargetDevice->getName().c_str(),
-                pTargetDevice->getAddress().toString().c_str());
-
-  pClient = BLEDevice::createClient();
-  pClient->setClientCallbacks(new BleClientCallbacks());
-  pClient->connect(pTargetDevice);
-  pClient->setMTU(185);
-
-  BLERemoteService *pHidService = pClient->getService(hidServiceUUID);
-  if (pHidService == nullptr)
-  {
-    Serial.println("BLE: HID service not found.");
-    pClient->disconnect();
-    return false;
-  }
-  Serial.println("BLE: Found HID service.");
-
-  int subscribed = 0;
-  std::map<std::string, BLERemoteCharacteristic *> *pCharMap =
-    pHidService->getCharacteristics();
-
-  for (auto const &entry : *pCharMap)
-  {
-    BLERemoteCharacteristic *pChar = entry.second;
-
-    if (pChar->getUUID().equals(reportCharUUID) && pChar->canNotify())
-    {
-      BLERemoteDescriptor *pReportRef =
-        pChar->getDescriptor(BLEUUID((uint16_t)0x2908));
-
-      if (pReportRef != nullptr)
-      {
-        String refValue = pReportRef->readValue();
-        if (refValue.length() >= 2)
-        {
-          uint8_t reportId = refValue[0];
-          uint8_t reportType = refValue[1];
-          if (reportType == 1)
-          {
-            pChar->registerForNotify(bleNotifyCallback);
-            subscribed++;
-            Serial.printf("BLE: Subscribed to report ID %d.\n", reportId);
-          }
-        }
-      }
-      else
-      {
-        pChar->registerForNotify(bleNotifyCallback);
-        subscribed++;
-      }
-    }
   }
 
-  if (subscribed == 0)
+  // Drive LED state from BLE state
+  if (connected)
   {
-    Serial.println("BLE: No input reports found.");
-    pClient->disconnect();
-    return false;
+    setLedState(LED_CONNECTED);
   }
-
-  bleReady = true;
-  blePairingMode = false;
-  setLedState(LED_CONNECTED);
-  Serial.printf("BLE: Ready. %d input report(s).\n", subscribed);
-
-  // Persist peer address for fast reconnect on next boot
-  String connectedAddr = pTargetDevice->getAddress().toString();
-  if (connectedAddr != savedAddress)
+  else if (pairing)
   {
-    savedAddress = connectedAddr;
-    blePrefs.begin(NVS_NAMESPACE, false);
-    blePrefs.putString(NVS_KEY_ADDR, savedAddress);
-    blePrefs.end();
-    Serial.printf("BLE: Saved peer address %s\n", savedAddress.c_str());
-  }
-
-  return true;
-}
-
-// Scan callback
-class BleScanCallbacks : public BLEAdvertisedDeviceCallbacks
-{
-  void onResult(BLEAdvertisedDevice advertisedDevice)
-  {
-    String addr = advertisedDevice.getAddress().toString();
-    String name = advertisedDevice.getName();
-    bool isHid = advertisedDevice.haveServiceUUID() &&
-                 advertisedDevice.isAdvertisingService(hidServiceUUID);
-    bool isKnownPeer = (savedAddress.length() > 0) &&
-                       addr.equalsIgnoreCase(savedAddress);
-
-    if (isHid || isKnownPeer)
-    {
-      Serial.printf("BLE: Found keyboard: %s (%s)\n",
-                    name.c_str(), addr.c_str());
-
-      BLEDevice::getScan()->stop();
-
-      if (pTargetDevice != nullptr)
-      {
-        delete pTargetDevice;
-      }
-      pTargetDevice = new BLEAdvertisedDevice(advertisedDevice);
-      bleDoConnect = true;
-      bleDoScan = true;
-    }
-  }
-};
-
-void bleInit()
-{
-  // Load previously bonded peer address from NVS, if any
-  blePrefs.begin(NVS_NAMESPACE, true);
-  savedAddress = blePrefs.getString(NVS_KEY_ADDR, "");
-  blePrefs.end();
-  if (savedAddress.length() > 0)
-  {
-    Serial.printf("BLE: Known peer %s\n", savedAddress.c_str());
+    setLedState(LED_STARTUP);
   }
   else
   {
-    Serial.println("BLE: No known peer, will pair with first HID keyboard.");
+    setLedState(LED_SCANNING);
   }
 
-  BLEDevice::init("TI99-KB");
-
-  BLESecurity *pSecurity = new BLESecurity();
-  pSecurity->setCapability(ESP_IO_CAP_NONE);
-  pSecurity->setAuthenticationMode(true, false, true);
-  BLEDevice::setSecurityCallbacks(new BLESecurityCallbacks());
-
-  BLEScan *pScan = BLEDevice::getScan();
-  pScan->setAdvertisedDeviceCallbacks(new BleScanCallbacks());
-  pScan->setInterval(1349);
-  pScan->setWindow(449);
-  pScan->setActiveScan(true);
-  pScan->start(5, false);
-  bleDoScan = true;
-
-  pinMode(PIN_BOOT_BUTTON, INPUT_PULLUP);
-  Serial.println("BLE: Initialized. Scanning...");
-  setLedState(LED_SCANNING);
+  wasConnected = connected;
+  wasPairing   = pairing;
 }
 
-// Enter BLE pairing mode: forget current peer, disconnect, and scan for
-// any HID keyboard for the next BLE_PAIRING_WINDOW_MS milliseconds.
-// Called by both the BOOT button and the F12 keyboard shortcut.
-void bleEnterPairingMode()
+static void bleInit()
 {
-  Serial.println("BLE: Entering pairing mode (30s).");
-
-  blePairingMode = true;
-  blePairingDeadline = millis() + BLE_PAIRING_WINDOW_MS;
-
-  // Forget the previously bonded peer so a new keyboard can be paired
-  savedAddress = "";
-  blePrefs.begin(NVS_NAMESPACE, false);
-  blePrefs.remove(NVS_KEY_ADDR);
-  blePrefs.end();
-
-  // Disconnect any current client (handler will clean up state)
-  if (pClient != nullptr && pClient->isConnected())
-  {
-    Serial.println("BLE: Disconnecting current peer...");
-    pClient->disconnect();
-    delay(200);  // brief wait for disconnect callback to fire
-  }
-
-  // NOTE: Arduino-ESP32 3.3.7's BLE library does not expose bond
-  // management to sketch code (no removeBond / getBondedDevices in the
-  // public API), and the underlying esp_ble_* GAP headers are not in
-  // the sketch include path. Bonds will accumulate in NVS until the
-  // bond store rotates them out. A future port to NimBLE-Arduino would
-  // give us NimBLEDevice::deleteAllBonds() to fix this cleanly.
-
-  // Don't start a long scan here — that blocks the loop. Just stop any
-  // running scan and let the regular 5s scanning-while-disconnected
-  // block run repeatedly with blePairingMode still set, until either a
-  // keyboard pairs or the 30s deadline expires.
-  BLEScan *pScan = BLEDevice::getScan();
-  pScan->stop();
-  pScan->clearResults();
-  setLedState(LED_STARTUP);
-  bleDoScan = true;
-
-  Serial.println("BLE: Pairing scan started.");
+  BleHidHost::setReportCallback(bleOnHidReport);
+  BleHidHost::begin("TI99-KB", "ti99kb");
 }
 
-void bleTask()
+static void bleTask()
 {
-  // F12 pairing-mode request from processHidReport (HID notify context)
-  if (blePairingRequested)
-  {
-    blePairingRequested = false;
-    Serial.println("BLE: F12 pressed — entering pairing mode.");
-    bleEnterPairingMode();
-  }
-
-  // Connect to device found during scan
-  if (bleDoConnect)
-  {
-    bleDoConnect = false;
-    if (!bleConnectToServer())
-    {
-      Serial.println("BLE: Connection failed.");
-    }
-  }
-
-  // Pairing mode timeout
-  if (blePairingMode && millis() > blePairingDeadline)
-  {
-    Serial.println("BLE: Pairing window expired.");
-    blePairingMode = false;
-  }
-
-  // Keep scanning while disconnected
-  if (!bleConnected && bleDoScan)
-  {
-    bleDoScan = false;
-    setLedState(blePairingMode ? LED_STARTUP : LED_SCANNING);
-    BLEScan *pScan = BLEDevice::getScan();
-    pScan->clearResults();
-    pScan->start(5, false);
-    bleDoScan = true;
-  }
-
-  // BOOT button — escape hatch when no working keyboard is available
-  if (digitalRead(PIN_BOOT_BUTTON) == LOW)
-  {
-    delay(50);
-    if (digitalRead(PIN_BOOT_BUTTON) == LOW)
-    {
-      bleEnterPairingMode();
-
-      // Wait for button release so we don't re-trigger immediately
-      while (digitalRead(PIN_BOOT_BUTTON) == LOW)
-      {
-        delay(50);
-      }
-      Serial.println("BLE: Button released.");
-    }
-  }
+  BleHidHost::task();
+  bleUpdateLedAndState();
 }
 
 #endif // INPUT_BLE
@@ -995,6 +754,189 @@ static inline void updateRowOutputs()
 }
 
 // ---------------------------------------------------------------------------
+// Serial Debug Mode
+// ---------------------------------------------------------------------------
+// Type a 15-digit binary number (e.g. "110000001000000") into the serial
+// monitor to directly drive all 15 TI connector pins. Bit order matches
+// the TI keyboard connector pin numbering:
+//
+//   Bit 1  (leftmost)  = TI pin 1  (INT5,  row, GPIO 4)
+//   Bit 2              = TI pin 2  (INT6,  row, GPIO 5)
+//   Bit 3              = TI pin 3  (INT8,  row, GPIO 6)
+//   Bit 4              = TI pin 4  (INT4,  row, GPIO 7)
+//   Bit 5              = TI pin 5  (INT3,  row, GPIO 15)
+//   Bit 6              = TI pin 6  (P5,    nc — ignored)
+//   Bit 7              = TI pin 7  (INT7,  row, GPIO 16)
+//   Bit 8              = TI pin 8  (1Y1,   col, GPIO 17)
+//   Bit 9              = TI pin 9  (1Y0,   col, GPIO 18)
+//   Bit 10             = TI pin 10 (INT9,  row, GPIO 9)
+//   Bit 11             = TI pin 11 (INT10, row, GPIO 10)
+//   Bit 12             = TI pin 12 (2Y0,   col, GPIO 11)
+//   Bit 13             = TI pin 13 (2Y1,   col, GPIO 12)
+//   Bit 14             = TI pin 14 (2Y2,   col, GPIO 13)
+//   Bit 15 (rightmost) = TI pin 15 (2Y3,   col, GPIO 14)
+//
+// A '1' drives the pin LOW (active), a '0' releases it (high-Z / input).
+// Type "off" or "reset" to release all pins and return to normal mode.
+
+static const int debugPinMap[15] =
+{
+  PIN_ROW_INT5,   // TI pin 1
+  PIN_ROW_INT6,   // TI pin 2
+  PIN_ROW_INT8,   // TI pin 3
+  PIN_ROW_INT4,   // TI pin 4
+  PIN_ROW_INT3,   // TI pin 5
+  -1,             // TI pin 6  (P5, not connected)
+  PIN_ROW_INT7,   // TI pin 7
+  PIN_COL_1Y1,    // TI pin 8
+  PIN_COL_1Y0,    // TI pin 9
+  PIN_ROW_INT9,   // TI pin 10
+  PIN_ROW_INT10,  // TI pin 11
+  PIN_COL_2Y0,    // TI pin 12
+  PIN_COL_2Y1,    // TI pin 13
+  PIN_COL_2Y2,    // TI pin 14
+  PIN_COL_2Y3,    // TI pin 15
+};
+
+static bool debugMode = false;
+static bool cycleMode = false;
+static unsigned long cycleLastTime = 0;
+static int cyclePinIndex = 0;
+
+static const char* debugPinNames[15] =
+{
+  "INT5 ", "INT6 ", "INT8 ", "INT4 ", "INT3 ",
+  "P5   ", "INT7 ", "1Y1  ", "1Y0  ",
+  "INT9 ", "INT10", "2Y0  ", "2Y1  ", "2Y2  ", "2Y3  "
+};
+
+void processCycleMode()
+{
+  if (!cycleMode)
+  {
+    return;
+  }
+
+  unsigned long now = millis();
+  if (now - cycleLastTime < 1000)
+  {
+    return;
+  }
+  cycleLastTime = now;
+
+  // Release previous pin
+  int prevIndex = (cyclePinIndex == 0) ? 14 : cyclePinIndex - 1;
+  // Find previous valid pin
+  for (int i = 0; i < 14; i++)
+  {
+    if (debugPinMap[prevIndex] >= 0)
+    {
+      pinMode(debugPinMap[prevIndex], INPUT);
+      break;
+    }
+    prevIndex = (prevIndex == 0) ? 14 : prevIndex - 1;
+  }
+
+  // Skip pin 6 (P5, not connected)
+  if (debugPinMap[cyclePinIndex] < 0)
+  {
+    cyclePinIndex = (cyclePinIndex + 1) % 15;
+  }
+
+  // Drive current pin LOW
+  int pin = debugPinMap[cyclePinIndex];
+  pinMode(pin, OUTPUT);
+  digitalWrite(pin, LOW);
+  Serial.printf("CYCLE: TI pin %2d (%s) -> GPIO %d LOW\n",
+                cyclePinIndex + 1, debugPinNames[cyclePinIndex], pin);
+
+  cyclePinIndex = (cyclePinIndex + 1) % 15;
+}
+
+void processSerialDebug()
+{
+  // Run cycle mode each loop iteration
+  processCycleMode();
+
+  if (!Serial.available())
+  {
+    return;
+  }
+
+  String input = Serial.readStringUntil('\n');
+  input.trim();
+
+  if (input.length() == 0)
+  {
+    return;
+  }
+
+  // Release all pins and exit debug/cycle mode
+  if (input.equalsIgnoreCase("off") || input.equalsIgnoreCase("reset"))
+  {
+    for (int i = 0; i < 15; i++)
+    {
+      if (debugPinMap[i] >= 0)
+      {
+        pinMode(debugPinMap[i], INPUT);
+      }
+    }
+    debugMode = false;
+    cycleMode = false;
+    Serial.println("DEBUG: All pins released. Normal mode.");
+    return;
+  }
+
+  // Cycle test mode
+  if (input.equalsIgnoreCase("cycle"))
+  {
+    debugMode = true;
+    cycleMode = true;
+    cyclePinIndex = 0;
+    cycleLastTime = 0;
+    Serial.println("CYCLE: Toggling each TI pin for 1 second. Type 'off' to stop.");
+    return;
+  }
+
+  // Expect a 15-digit binary string
+  if (input.length() != 15)
+  {
+    Serial.println("DEBUG: Enter 15 binary digits (e.g. 110000001000000)");
+    Serial.println("       or 'cycle' to cycle through all pins.");
+    Serial.println("       or 'off' to release all pins.");
+    return;
+  }
+
+  cycleMode = false;
+  debugMode = true;
+  Serial.printf("DEBUG: Setting pins: %s\n", input.c_str());
+  Serial.printf("       TI pins:  ");
+
+  for (int i = 0; i < 15; i++)
+  {
+    int pin = debugPinMap[i];
+    if (pin < 0)
+    {
+      Serial.printf("-- ");
+      continue;
+    }
+
+    if (input.charAt(i) == '1')
+    {
+      pinMode(pin, OUTPUT);
+      digitalWrite(pin, LOW);
+      Serial.printf("LO ");
+    }
+    else
+    {
+      pinMode(pin, INPUT);
+      Serial.printf("HI ");
+    }
+  }
+  Serial.println();
+}
+
+// ---------------------------------------------------------------------------
 // Setup and Main Loop
 // ---------------------------------------------------------------------------
 void setup()
@@ -1016,8 +958,6 @@ void setup()
     pinMode(rowPins[r], INPUT);
   }
 
-  pinMode(PIN_ALPHA_LOCK, INPUT);
-
 #ifdef INPUT_USB
   Serial.println("USB: Initializing...");
   usbHost.begin();
@@ -1032,14 +972,20 @@ void setup()
 
 void loop()
 {
+  processSerialDebug();
+
+  if (!debugMode)
+  {
 #ifdef INPUT_USB
-  usbHost.task();
+    usbHost.task();
 #endif
 
 #ifdef INPUT_BLE
-  bleTask();
+    bleTask();
 #endif
 
-  updateRowOutputs();
+    updateRowOutputs();
+  }
+
   updateLed();
 }

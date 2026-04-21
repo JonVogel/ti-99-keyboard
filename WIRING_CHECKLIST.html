@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>TI-99/4A Keyboard Adapter - Wiring Checklist</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11pt; margin: 20px; }
+  h1 { font-size: 16pt; margin-bottom: 5px; }
+  h2 { font-size: 13pt; margin-top: 20px; margin-bottom: 5px; }
+  table { border-collapse: collapse; width: auto; margin-bottom: 10px; table-layout: fixed; }
+  th, td { border: 1px solid #000; padding: 4px 8px; text-align: left; font-size: 10pt; width: 120px; }
+  th { background-color: #ddd; }
+  td:last-child, th:last-child { width: 50px; text-align: center; }
+  @media print { body { margin: 10px; } }
+</style>
+</head>
+<body>
+
+<h1>TI-99/4A Keyboard Adapter &mdash; Wiring Checklist</h1>
+<p>ESP32-S3 N16R8 dev board. Physical pin # = position on left header, 1=top, 22=bottom.</p>
+
+<h2>Power Rails</h2>
+<table>
+<tr><th>From</th><th>To</th><th>OK</th></tr>
+<tr><td>Buck converter 5V out</td><td>TXS#1 VB</td><td></td></tr>
+<tr><td>Buck converter 5V out</td><td>TXS#2 VB</td><td></td></tr>
+<tr><td>Buck converter 5V out</td><td>ESP32 pin 21 [5V0]</td><td></td></tr>
+<tr><td>ESP32 pin 1 [3V3]</td><td>TXS#1 VA</td><td></td></tr>
+<tr><td>ESP32 pin 1 [3V3]</td><td>TXS#2 VA</td><td></td></tr>
+<tr><td>ESP32 pin 1 [3V3]</td><td>TXS#1 OE</td><td></td></tr>
+<tr><td>ESP32 pin 1 [3V3]</td><td>TXS#2 OE</td><td></td></tr>
+<tr><td>Buck converter GND</td><td>ESP32 pin 22 [GND]</td><td></td></tr>
+<tr><td>ESP32 pin 22 [GND]</td><td>TXS#1 GND</td><td></td></tr>
+<tr><td>ESP32 pin 22 [GND]</td><td>TXS#2 GND</td><td></td></tr>
+<tr><td>ESP32 pin 22 [GND]</td><td>TI GND</td><td></td></tr>
+</table>
+
+<h2>TXS#1 &mdash; A Side to ESP32</h2>
+<table>
+<tr><th>TXS#1 Pin</th><th>ESP32 Pin #</th><th>GPIO</th><th>OK</th></tr>
+<tr><td>A8</td><td>4</td><td>4</td><td></td></tr>
+<tr><td>A7</td><td>5</td><td>5</td><td></td></tr>
+<tr><td>A6</td><td>6</td><td>6</td><td></td></tr>
+<tr><td>A5</td><td>7</td><td>7</td><td></td></tr>
+<tr><td>A4</td><td>8</td><td>15</td><td></td></tr>
+<tr><td>A3</td><td>9</td><td>16</td><td></td></tr>
+<tr><td>A2</td><td>10</td><td>17</td><td></td></tr>
+<tr><td>A1</td><td>11</td><td>18</td><td></td></tr>
+</table>
+
+<h2>TXS#1 &mdash; B Side to TI Cable</h2>
+<table>
+<tr><th>TXS#1 Pin</th><th>TI Pin</th><th>TI Signal</th><th>Type</th><th>OK</th></tr>
+<tr><td>B8</td><td>1</td><td>INT5</td><td>row</td><td></td></tr>
+<tr><td>B7</td><td>2</td><td>INT6</td><td>row</td><td></td></tr>
+<tr><td>B6</td><td>3</td><td>INT8</td><td>row</td><td></td></tr>
+<tr><td>B5</td><td>4</td><td>INT4</td><td>row</td><td></td></tr>
+<tr><td>B4</td><td>5</td><td>INT3</td><td>row</td><td></td></tr>
+<tr><td>&mdash;</td><td>6</td><td>P5 (Alpha Lock)</td><td>nc</td><td></td></tr>
+<tr><td>B3</td><td>7</td><td>INT7</td><td>row</td><td></td></tr>
+<tr><td>B2</td><td>8</td><td>1Y1</td><td>col</td><td></td></tr>
+<tr><td>B1</td><td>9</td><td>1Y0</td><td>col</td><td></td></tr>
+</table>
+
+<h2>TXS#2 &mdash; A Side to ESP32</h2>
+<table>
+<tr><th>TXS#2 Pin</th><th>ESP32 Pin #</th><th>GPIO</th><th>OK</th></tr>
+<tr><td>A8</td><td>15</td><td>9</td><td></td></tr>
+<tr><td>A7</td><td>16</td><td>10</td><td></td></tr>
+<tr><td>A6</td><td>17</td><td>11</td><td></td></tr>
+<tr><td>A5</td><td>18</td><td>12</td><td></td></tr>
+<tr><td>A4</td><td>19</td><td>13</td><td></td></tr>
+<tr><td>A3</td><td>20</td><td>14</td><td></td></tr>
+<tr><td>A2</td><td>(nc)</td><td>&mdash;</td><td></td></tr>
+<tr><td>A1</td><td>(nc)</td><td>&mdash;</td><td></td></tr>
+</table>
+
+<h2>TXS#2 &mdash; B Side to TI Cable</h2>
+<table>
+<tr><th>TXS#2 Pin</th><th>TI Pin</th><th>TI Signal</th><th>Type</th><th>OK</th></tr>
+<tr><td>B8</td><td>10</td><td>INT9</td><td>row</td><td></td></tr>
+<tr><td>B7</td><td>11</td><td>INT10</td><td>row</td><td></td></tr>
+<tr><td>B6</td><td>12</td><td>2Y0</td><td>col</td><td></td></tr>
+<tr><td>B5</td><td>13</td><td>2Y1</td><td>col</td><td></td></tr>
+<tr><td>B4</td><td>14</td><td>2Y2</td><td>col</td><td></td></tr>
+<tr><td>B3</td><td>15</td><td>2Y3</td><td>col</td><td></td></tr>
+<tr><td>B2</td><td>&mdash;</td><td>(nc)</td><td>&mdash;</td><td></td></tr>
+<tr><td>B1</td><td>&mdash;</td><td>(nc)</td><td>&mdash;</td><td></td></tr>
+</table>
+
+<h2>End-to-End Continuity (ESP32 GPIO to TI Pin)</h2>
+<table>
+<tr><th>ESP32 Pin #</th><th>GPIO</th><th>TI Pin</th><th>TI Signal</th><th>OK</th></tr>
+<tr><td>4</td><td>4</td><td>1</td><td>INT5</td><td></td></tr>
+<tr><td>5</td><td>5</td><td>2</td><td>INT6</td><td></td></tr>
+<tr><td>6</td><td>6</td><td>3</td><td>INT8</td><td></td></tr>
+<tr><td>7</td><td>7</td><td>4</td><td>INT4</td><td></td></tr>
+<tr><td>8</td><td>15</td><td>5</td><td>INT3</td><td></td></tr>
+<tr><td>&mdash;</td><td>&mdash;</td><td>6</td><td>P5 (nc)</td><td></td></tr>
+<tr><td>9</td><td>16</td><td>7</td><td>INT7</td><td></td></tr>
+<tr><td>10</td><td>17</td><td>8</td><td>1Y1</td><td></td></tr>
+<tr><td>11</td><td>18</td><td>9</td><td>1Y0</td><td></td></tr>
+<tr><td>15</td><td>9</td><td>10</td><td>INT9</td><td></td></tr>
+<tr><td>16</td><td>10</td><td>11</td><td>INT10</td><td></td></tr>
+<tr><td>17</td><td>11</td><td>12</td><td>2Y0</td><td></td></tr>
+<tr><td>18</td><td>12</td><td>13</td><td>2Y1</td><td></td></tr>
+<tr><td>19</td><td>13</td><td>14</td><td>2Y2</td><td></td></tr>
+<tr><td>20</td><td>14</td><td>15</td><td>2Y3</td><td></td></tr>
+</table>
+
+<h2>Unused Pins (verify not connected)</h2>
+<table>
+<tr><th>ESP32 Pin #</th><th>Label</th><th>Reason</th><th>OK</th></tr>
+<tr><td>3</td><td>[RST]</td><td>Do not wire to OE</td><td></td></tr>
+<tr><td>12</td><td>[8] GPIO 8</td><td>Gap between TXS boards</td><td></td></tr>
+<tr><td>13</td><td>[3] GPIO 3</td><td>Gap between TXS boards</td><td></td></tr>
+<tr><td>14</td><td>[46] GPIO 46 (LOG)</td><td>Gap between TXS boards</td><td></td></tr>
+</table>
+
+<h2>No-Short Checks</h2>
+<table style="width: auto;">
+<tr><th style="width: 300px;">Check</th><th style="width: 80px;">OK</th></tr>
+<tr><td>3V3 not shorted to 5V</td><td></td></tr>
+<tr><td>3V3 not shorted to GND</td><td></td></tr>
+<tr><td>5V not shorted to GND</td><td></td></tr>
+<tr><td>TXS#1 OE not shorted to ESP32 RST</td><td></td></tr>
+<tr><td>GPIO 8 (pin 12) not connected</td><td></td></tr>
+<tr><td>GPIO 3 (pin 13) not connected</td><td></td></tr>
+<tr><td>GPIO 46 (pin 14) not connected</td><td></td></tr>
+</table>
+
+</body>
+</html>

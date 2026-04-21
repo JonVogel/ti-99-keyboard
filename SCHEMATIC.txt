@@ -1,0 +1,122 @@
+TI-99/4A Keyboard Adapter — Wiring Schematic
+=============================================
+
+  ESP32-S3 N16R8 dev board (Lonely Binary Gold Edition).
+  Physical pin numbers count from pin 1 (3V3) at top of left header
+  down to pin 22 (GND) at the bottom. Silkscreen labels in brackets.
+
+
+                     TI-99/4A +12V Rail
+                            |
+                   +--------+--------+
+                   |  Buck Converter  |
+                   |    12V -> 5V     |
+                   +--------+--------+
+                            |
+                          5V Bus ------+----------+----------+
+                            |          |          |          |
+                            |       TXS#1 VB  TXS#2 VB  ESP32 pin 21 [5V0]
+                            |
+                          GND Bus -----+----------+----------+----------+
+                                       |          |          |          |
+                                    TXS#1 GND  TXS#2 GND  ESP32       TI GND
+                                                           pin 22 [GND]
+
+                     ESP32 pin 1 [3V3] +----------+----------+----------+
+                                       |          |          |          |
+                                    TXS#1 VA  TXS#1 OE  TXS#2 VA  TXS#2 OE
+
+
+
+  ESP32-S3 N16R8                   TXS0108E #1                      TI Keyboard
+  Left Side Header                 (6 rows + 2 cols)                 Connector
+  ==================               =================                 =========
+
+  Physical                         A side          B side
+  Pin #  [silkscreen]              ------          ------
+
+    1    [3V3] ── (power, see above)
+    2    [3V3] ── (power, see above)
+    3    [RST] ── (do NOT connect to OE)
+
+    4    [4]  GPIO 4  ─────── A8      B8 ─────────────────── Pin 1  (INT5,  row)
+    5    [5]  GPIO 5  ─────── A7      B7 ─────────────────── Pin 2  (INT6,  row)
+    6    [6]  GPIO 6  ─────── A6      B6 ─────────────────── Pin 3  (INT8,  row)
+    7    [7]  GPIO 7  ─────── A5      B5 ─────────────────── Pin 4  (INT4,  row)
+    8    [15] GPIO 15 ─────── A4      B4 ─────────────────── Pin 5  (INT3,  row)
+                                                   (nc) ──── Pin 6  (P5, Alpha Lock)
+    9    [16] GPIO 16 ─────── A3      B3 ─────────────────── Pin 7  (INT7,  row)
+   10    [17] GPIO 17 ─────── A2      B2 ─────────────────── Pin 8  (1Y1,   col 0)
+   11    [18] GPIO 18 ─────── A1      B1 ─────────────────── Pin 9  (1Y0,   col 4)
+
+   12    [8]  GPIO 8  ── (unused)
+   13    [3]  GPIO 3  ── (unused)
+   14    [46] GPIO 46 ── (LOG pin, unused — gap between TXS boards)
+
+
+                                   TXS0108E #2
+                                   (2 rows + 4 cols)
+
+                                   A side          B side
+                                   ------          ------
+
+   15    [9]  GPIO 9  ─────── A8      B8 ─────────────────── Pin 10 (INT9,  row)
+   16    [10] GPIO 10 ─────── A7      B7 ─────────────────── Pin 11 (INT10, row)
+   17    [11] GPIO 11 ─────── A6      B6 ─────────────────── Pin 12 (2Y0,   col 5)
+   18    [12] GPIO 12 ─────── A5      B5 ─────────────────── Pin 13 (2Y1,   col 1)
+   19    [13] GPIO 13 ─────── A4      B4 ─────────────────── Pin 14 (2Y2,   col 2)
+   20    [14] GPIO 14 ─────── A3      B3 ─────────────────── Pin 15 (2Y3,   col 3)
+                       (nc) ─ A2      B2 ─────────────────── (nc)
+                       (nc) ─ A1      B1 ─────────────────── (nc)
+
+   21    [5V0] ── (power, see above)
+   22    [GND] ── (power, see above)
+
+
+
+  Signal Flow Summary
+  ====================
+
+  Row outputs (ESP32 drives LOW to simulate key press):
+
+      ESP32 ──► TXS A-side ──► TXS B-side ──► TI INT line
+      (3.3V)    (level shift)   (5V)           (to TMS9901)
+
+      Pin 4  [4]  GPIO 4  ──►  TI Pin 1   INT5
+      Pin 5  [5]  GPIO 5  ──►  TI Pin 2   INT6
+      Pin 6  [6]  GPIO 6  ──►  TI Pin 3   INT8
+      Pin 7  [7]  GPIO 7  ──►  TI Pin 4   INT4
+      Pin 8  [15] GPIO 15 ──►  TI Pin 5   INT3
+      Pin 9  [16] GPIO 16 ──►  TI Pin 7   INT7
+      Pin 15 [9]  GPIO 9  ──►  TI Pin 10  INT9
+      Pin 16 [10] GPIO 10 ──►  TI Pin 11  INT10
+
+
+  Column inputs (TI's 74LS156 drives LOW to select column):
+
+      TI 74LS156 ──► TXS B-side ──► TXS A-side ──► ESP32
+      (5V)           (level shift)   (3.3V)         (digitalRead)
+
+      TI Pin 8   1Y1  ──►  GPIO 17  [17]  Pin 10  (col 0)
+      TI Pin 9   1Y0  ──►  GPIO 18  [18]  Pin 11  (col 4)
+      TI Pin 12  2Y0  ──►  GPIO 11  [11]  Pin 17  (col 5)
+      TI Pin 13  2Y1  ──►  GPIO 12  [12]  Pin 18  (col 1)
+      TI Pin 14  2Y2  ──►  GPIO 13  [13]  Pin 19  (col 2)
+      TI Pin 15  2Y3  ──►  GPIO 14  [14]  Pin 20  (col 3)
+
+
+  Notes
+  =====
+
+  - TI Pin 6 (P5 / Alpha Lock) is NOT connected. Alpha Lock is
+    implemented in software to avoid the TI's joystick-UP bug.
+
+  - TXS#2 channels A2/B2 and A1/B1 are not connected on either side.
+
+  - GPIO 8 (pin 12), GPIO 3 (pin 13), and GPIO 46 (pin 14) sit in the
+    physical gap between the two TXS boards and are all unused.
+
+  - Each TXS0108E OE pin must be jumpered to ESP32 pin 1 [3V3]
+    to enable the buffer. Do NOT connect OE to pin 3 [RST].
+
+  - The TXS0108E auto-detects signal direction — no DIR pin.
