@@ -292,12 +292,33 @@ def build_schematic():
     FP_S06 = "Connector_PinSocket_2.54mm:PinSocket_1x06_P2.54mm_Vertical"
     FP_H15 = "Connector_PinHeader_2.54mm:PinHeader_1x15_P2.54mm_Vertical"
     FP_H02 = "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
+    FP_M04 = ("Connector_Molex:Molex_KK-396_5273-04A_"
+             "1x04_P3.96mm_Vertical")
+    FP_H04 = "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
 
     # ---- Place components ----
     # Signal flow: ESP32 (right) -> BOB LV-side -> BOB HV-side -> TI (left)
 
-    # Power input (top-left)
+    # Bench-test 5V power input (kept for development without TI PSU)
     j_pwr = s.add_conn("J9", 2, 35.56, 34.29, FP_H02, "PWR_5V_IN")
+
+    # TI PSU daisy-chain.
+    # TI 4-pin power pinout (per user-provided datasheet):
+    #   pin 1 = -5V, pin 2 = +12V, pin 3 = GND, pin 4 = +5V
+    #
+    # J13: 4-pin solder-pad header. A pre-built cable is permanently
+    #      soldered into these holes; the cable's far end has a female
+    #      plug that mates with the TI PSU's male pin header. Plain
+    #      0.1" header footprint is used as solder pads for hookup wire.
+    # J14: 4-pin Molex KK-396 male header. The TI mainboard's existing
+    #      female plug mates here. Adapter sits inline between PSU and
+    #      MB; pins 1 and 2 pass straight through, pins 3 (GND) and 4
+    #      (+5V) tap into the board's internal power nets.
+    # Placed at the bottom of the schematic in the empty area below all
+    # other components. Schematic position has no effect on PCB layout
+    # -- you'll position the actual footprints in the PCB editor.
+    j_psu_in  = s.add_conn("J13", 4, 50.80, 130.00, FP_H04, "PWR_TI_IN_CABLE")
+    j_psu_out = s.add_conn("J14", 4, 86.36, 130.00, FP_M04, "PWR_TI_OUT_MB")
 
     # TI keyboard connector (left, pins face right)
     j_ti = s.add_conn("J10", 15, 35.56, 88.90, FP_H15, "TI_KBD")
@@ -357,6 +378,8 @@ def build_schematic():
     s.text("TI-99/4A Keyboard Adapter - Carrier Board (BSS138 rev)",
            70.866, 19.812, 3.0)
     s.text("POWER", 43.688, 27.178, 2.0)
+    s.text("TI PSU DAISY-CHAIN  (J13 = cable to PSU,  "
+           "J14 = MB plug)", 50.80, 122.0, 1.5)
     s.text("BOB #1 (TI 1-4)",  93.0, 32.0, 1.3)
     s.text("BOB #2 (TI 5-9)",  93.0, 52.3, 1.3)
     s.text("BOB #3 (TI 10-13)", 93.0, 72.6, 1.3)
@@ -378,15 +401,21 @@ def build_schematic():
     for lv in (j1_lv, j2_lv, j3_lv, j4_lv):
         s.pin_glabel(lv[3], "+3V3")
 
-    # +5V source: external power input
+    # +5V sources: bench-test 2-pin header (J9) AND TI PSU daisy-chain
+    # (J13/J14 pin 4). Both feed the same +5V net.
     s.pin_glabel(j_pwr[1], "+5V")
+    s.pin_glabel(j_psu_in[4], "+5V")
+    s.pin_glabel(j_psu_out[4], "+5V")
     # +5V sinks: ESP32 5V0 (pin 21), HV rail (socket pin 3) on each BOB HV side
     s.pin_glabel(j_esp_l[21], "+5V", mirror=True)
     for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
         s.pin_glabel(hv[3], "+5V", mirror=True)
 
-    # GND source: external power input
+    # GND sources: bench-test 2-pin header (J9) AND TI PSU daisy-chain
+    # (J13/J14 pin 3). Both tie to the same GND net.
     s.pin_glabel(j_pwr[2], "GND")
+    s.pin_glabel(j_psu_in[3], "GND")
+    s.pin_glabel(j_psu_out[3], "GND")
     # GND sinks: ESP32 GND; BOB GND is at socket pin 4 on both sides.
     # (Common ground between LV and HV is essential for the BSS138 to
     # work -- all grounds tie to the same net.)
@@ -395,6 +424,14 @@ def build_schematic():
         s.pin_glabel(lv[4], "GND")
     for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
         s.pin_glabel(hv[4], "GND", mirror=True)
+
+    # TI PSU pass-through nets for -5V and +12V (not used by this board,
+    # but routed straight from J13 to J14 so the TI mainboard still gets
+    # all four rails when the adapter sits inline between PSU and MB).
+    s.pin_label(j_psu_in[1],  "PSU_-5V")
+    s.pin_label(j_psu_out[1], "PSU_-5V")
+    s.pin_label(j_psu_in[2],  "PSU_+12V")
+    s.pin_label(j_psu_out[2], "PSU_+12V")
 
     # ==================================================================
     # CHANNEL CONNECTIONS
