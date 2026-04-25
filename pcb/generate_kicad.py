@@ -3,21 +3,45 @@
 Generate KiCad 10 project files for TI-99/4A Keyboard Adapter carrier board.
 
 This board is a simple carrier that sockets off-the-shelf modules:
-  - ESP32-S3 DevKitC-1 LBGE (via 2x 1x22 pin sockets)
-  - 2x TXS0108E breakout boards (via 1x10 pin sockets per side)
+  - ESP32-S3 DevKitC-1 LBGE (via 2x 1x22 pin sockets, 25.4mm row spacing)
+  - 4x BSS138 4-channel level shifter breakouts (BOB-12009 style),
+    each via 2x 1x6 pin sockets at 10mm row spacing
   - 1x15 pin header for TI-99/4A keyboard ribbon
   - 1x2 pin header for 5V power input
 
 The PCB has no active components -- just headers and copper traces.
 
-TXS0108E HW-221 breakout pin mapping (top to bottom):
-  A-side (1x10): OE, A8, A7, A6, A5, A4, A3, A2, A1, VA
-  B-side (1x10): GND, B8, B7, B6, B5, B4, B3, B2, B1, VB
+History: previous rev used 2x TXS0108E modules, but TXS auto-direction
+detection fails on open-drain matrix emulation (latch-up, indeterminate
+levels, documented pad damage). BSS138 + pull-ups is the correct topology
+for a matrix; validated on bench 2026-04-20.
+
+BOB-12009 (SparkFun BSS138) socket pin mapping, confirmed from photo:
+  LV socket pin: 1=LV1, 2=LV2, 3=LV(3V3), 4=GND, 5=LV3, 6=LV4
+  HV socket pin: 1=HV1, 2=HV2, 3=HV(5V),  4=GND, 5=HV3, 6=HV4
+Channel-to-socket-pin: CH1=pin 1, CH2=pin 2, CH3=pin 5, CH4=pin 6
+Rails at pin 3, GNDs at pin 4. GND and rails are directly opposite
+across the board.
+
+Net naming: the LV and HV sides of each BOB are electrically isolated
+through the BSS138 MOSFET, so LV-side pins get a "<sig>_LV" net while
+HV-side pins get the bare "<sig>" net. Same-name nets would short LV
+to HV in the schematic.
+
+Channel allocation (14 of 16 used). Chosen for contiguous, non-crossing
+trace flow: each BOB takes a sequential block of GPIOs AND a sequential
+block of TI pins, with BOBs ordered top-to-bottom matching both:
+  BOB#1 (top):    GPIO 4-7   <-> TI 1-4
+  BOB#2:          GPIO 15-18 <-> TI 5,7,8,9   (TI 6 NC, Alpha Lock)
+  BOB#3:          GPIO 9-12  <-> TI 10-13
+  BOB#4 (bottom): GPIO 13-14 <-> TI 14-15     (CH3/CH4 unused)
 
 Usage:
   python generate_kicad.py
   Open ti99-kb-adapter.kicad_pro in KiCad 10.
   Press F8 (Update PCB from Schematic) to create the board layout.
+  Footprint suggestion: Connector_PinSocket_2.54mm:PinSocket_1x06_P2.54mm_Vertical
+  for each BOB side. Place the two sockets per BOB 10mm apart.
 """
 
 import uuid
@@ -265,21 +289,20 @@ def build_schematic():
 
     # Footprint library references
     FP_S22 = "Connector_PinSocket_2.54mm:PinSocket_1x22_P2.54mm_Vertical"
-    FP_S10 = "Connector_PinSocket_2.54mm:PinSocket_1x10_P2.54mm_Vertical"
+    FP_S06 = "Connector_PinSocket_2.54mm:PinSocket_1x06_P2.54mm_Vertical"
     FP_H15 = "Connector_PinHeader_2.54mm:PinHeader_1x15_P2.54mm_Vertical"
     FP_H02 = "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
 
     # ---- Place components ----
-    # Positions match user's cleaned-up KiCad layout.
-    # Signal flow: ESP32 (right) -> TXS A-side -> TXS B-side -> TI (left)
+    # Signal flow: ESP32 (right) -> BOB LV-side -> BOB HV-side -> TI (left)
 
     # Power input (top-left)
-    j8 = s.add_conn("J8", 2, 35.56, 34.29, FP_H02, "PWR_5V_IN")
+    j_pwr = s.add_conn("J9", 2, 35.56, 34.29, FP_H02, "PWR_5V_IN")
 
     # TI keyboard connector (left, pins face right)
-    j7 = s.add_conn("J7", 15, 35.56, 72.39, FP_H15, "TI_KBD")
+    j_ti = s.add_conn("J10", 15, 35.56, 88.90, FP_H15, "TI_KBD")
 
-    # TI signal name annotations (to the left of J7)
+    # TI signal name annotations (to the left of J_TI)
     ti_signals = [
         (1,  "INT5"),
         (2,  "INT6"),
@@ -298,151 +321,160 @@ def build_schematic():
         (15, "2Y3"),
     ]
     for pin, sig in ti_signals:
-        _, py = j7[pin]
+        _, py = j_ti[pin]
         s.text(sig, 24.0, py, 1.27)
 
-    # TXS#1 B-side (mirrored: pins face left toward TI)
-    j4 = s.add_conn("J4", 10, 87.63, 58.42, FP_S10, "TXS1_B", mirror=True,
-                     val_pos=(91.186, 58.42, 90))
-    # TXS#1 A-side (pins face right toward ESP32)
-    j3 = s.add_conn("J3", 10, 99.06, 58.42, FP_S10, "TXS1_A",
-                     val_pos=(95.758, 58.42, 90))
+    # Four BOB-12009 modules, stacked vertically between TI (left) and
+    # ESP32 (right). Each module: 2x 1x6 sockets, HV-side on left facing
+    # TI, LV-side on right facing ESP32. Row-to-row spacing within the
+    # physical BOB is 10mm (measured from board).
+    BOB_X_HV = 87.63
+    BOB_X_LV = BOB_X_HV + 10.00
+    BOB_Y_START = 40.64
+    BOB_Y_STEP = 20.32
 
-    # TXS#2 B-side (mirrored: pins face left toward TI)
-    j6 = s.add_conn("J6", 10, 87.63, 90.17, FP_S10, "TXS2_B", mirror=True,
-                     val_pos=(90.932, 89.916, 90))
-    # TXS#2 A-side (pins face right toward ESP32)
-    j5 = s.add_conn("J5", 10, 99.06, 90.17, FP_S10, "TXS2_A",
-                     val_pos=(95.25, 90.17, 90))
+    def place_bob(idx, ref_hv, ref_lv, value_hv, value_lv):
+        y = BOB_Y_START + idx * BOB_Y_STEP
+        hv = s.add_conn(ref_hv, 6, BOB_X_HV, y, FP_S06, value_hv,
+                        mirror=True, val_pos=(BOB_X_HV + 3.556, y, 90))
+        lv = s.add_conn(ref_lv, 6, BOB_X_LV, y, FP_S06, value_lv,
+                        val_pos=(BOB_X_LV - 3.302, y, 90))
+        return hv, lv
 
-    # ESP32 left header (mirrored: pins face left toward TXS)
-    j1 = s.add_conn("J1", 22, 151.13, 76.2, FP_S22, "ESP32_Left",
-                     mirror=True)
+    j1_hv, j1_lv = place_bob(0, "J1", "J2", "BOB1_HV", "BOB1_LV")
+    j2_hv, j2_lv = place_bob(1, "J3", "J4", "BOB2_HV", "BOB2_LV")
+    j3_hv, j3_lv = place_bob(2, "J5", "J6", "BOB3_HV", "BOB3_LV")
+    j4_hv, j4_lv = place_bob(3, "J7", "J8", "BOB4_HV", "BOB4_LV")
+
+    # ESP32 left header (mirrored: pins face left toward BOBs)
+    # LBGE row-to-row spacing is 25.4mm (10 pitches).
+    j_esp_l = s.add_conn("J11", 22, 151.13, 88.90, FP_S22, "ESP32_Left",
+                         mirror=True)
     # ESP32 right header (pins face right, all NC, mechanical only)
-    j2 = s.add_conn("J2", 22, 175.26, 76.2, FP_S22, "ESP32_Right")
+    j_esp_r = s.add_conn("J12", 22, 176.53, 88.90, FP_S22, "ESP32_Right")
 
     # ---- Section labels ----
-    s.text("TI-99/4A Keyboard Adapter - Carrier Board", 70.866, 19.812, 3.0)
+    s.text("TI-99/4A Keyboard Adapter - Carrier Board (BSS138 rev)",
+           70.866, 19.812, 3.0)
     s.text("POWER", 43.688, 27.178, 2.0)
-    s.text("TXS0108E #1", 93.726, 42.672, 1.5)
-    s.text("TXS0108E #2", 93.218, 75.438, 1.5)
-    s.text("ESP32-S3 DevKitC-1 (Left Header)", 155.448, 74.676, 1.5,
+    s.text("BOB #1 (TI 1-4)",  93.0, 32.0, 1.3)
+    s.text("BOB #2 (TI 5-9)",  93.0, 52.3, 1.3)
+    s.text("BOB #3 (TI 10-13)", 93.0, 72.6, 1.3)
+    s.text("BOB #4 (TI 14-15)", 93.0, 92.9, 1.3)
+    s.text("ESP32-S3 DevKitC-1 (Left Header)", 155.448, 87.376, 1.5,
            angle=90)
-    s.text("TI-99/4A Keyboard", 31.24, 71.816, 1.5, angle=90)
-    s.text("ESP32-S3 (Right Header - mechanical only)", 170.434, 77.978, 1.5,
-           angle=90)
+    s.text("TI-99/4A Keyboard", 31.24, 88.316, 1.5, angle=90)
+    s.text("ESP32-S3 (Right Header - mechanical only)", 171.704, 90.678,
+           1.5, angle=90)
 
     # ==================================================================
     # POWER NETS
     # ==================================================================
 
     # +3V3 sources: ESP32 pins 1, 2
-    s.pin_glabel(j1[1], "+3V3", mirror=True)
-    s.pin_glabel(j1[2], "+3V3", mirror=True)
-    # +3V3 sinks: TXS OE (pin 1) and VA/VCCA (pin 10) on both A-side boards
-    s.pin_glabel(j3[1], "+3V3")
-    s.pin_glabel(j3[10], "+3V3")
-    s.pin_glabel(j5[1], "+3V3")
-    s.pin_glabel(j5[10], "+3V3")
+    s.pin_glabel(j_esp_l[1], "+3V3", mirror=True)
+    s.pin_glabel(j_esp_l[2], "+3V3", mirror=True)
+    # +3V3 sinks: LV rail (socket pin 3) on each BOB LV side
+    for lv in (j1_lv, j2_lv, j3_lv, j4_lv):
+        s.pin_glabel(lv[3], "+3V3")
 
     # +5V source: external power input
-    s.pin_glabel(j8[1], "+5V")
-    # +5V sinks: ESP32 5V0 (pin 21), TXS VB/VCCB (pin 10) on both B-side
-    s.pin_glabel(j1[21], "+5V", mirror=True)
-    s.pin_glabel(j4[10], "+5V", mirror=True)
-    s.pin_glabel(j6[10], "+5V", mirror=True)
+    s.pin_glabel(j_pwr[1], "+5V")
+    # +5V sinks: ESP32 5V0 (pin 21), HV rail (socket pin 3) on each BOB HV side
+    s.pin_glabel(j_esp_l[21], "+5V", mirror=True)
+    for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
+        s.pin_glabel(hv[3], "+5V", mirror=True)
 
     # GND source: external power input
-    s.pin_glabel(j8[2], "GND")
-    # GND sinks: ESP32 GND, TXS GND (pin 1) on both B-side boards
-    s.pin_glabel(j1[22], "GND", mirror=True)
-    s.pin_glabel(j4[1], "GND", mirror=True)
-    s.pin_glabel(j6[1], "GND", mirror=True)
+    s.pin_glabel(j_pwr[2], "GND")
+    # GND sinks: ESP32 GND; BOB GND is at socket pin 4 on both sides.
+    # (Common ground between LV and HV is essential for the BSS138 to
+    # work -- all grounds tie to the same net.)
+    s.pin_glabel(j_esp_l[22], "GND", mirror=True)
+    for lv in (j1_lv, j2_lv, j3_lv, j4_lv):
+        s.pin_glabel(lv[4], "GND")
+    for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
+        s.pin_glabel(hv[4], "GND", mirror=True)
 
     # ==================================================================
-    # ESP32 -> TXS#1 A-SIDE CONNECTIONS (all 8 channels)
+    # CHANNEL CONNECTIONS
     # ==================================================================
-    # GPIO-to-channel mapping:
-    #   GPIO4->A8, GPIO5->A7, GPIO6->A6, GPIO7->A5,
-    #   GPIO15->A4, GPIO16->A3, GPIO17->A2, GPIO18->A1
+    # Each channel runs: ESP32 GPIO -> BOB LV pin -> [BSS138 MOSFET] ->
+    # BOB HV pin -> TI keyboard pin.
     #
-    # J1 pins face left (mirrored), J3 pins face right (not mirrored).
-    # Labels connect matching nets across the schematic.
-    txs1_a = [
-        (4,  2, "GPIO4_A8"),     # GPIO4  -> TXS1 A8 (pin 2)
-        (5,  3, "GPIO5_A7"),     # GPIO5  -> TXS1 A7 (pin 3)
-        (6,  4, "GPIO6_A6"),     # GPIO6  -> TXS1 A6 (pin 4)
-        (7,  5, "GPIO7_A5"),     # GPIO7  -> TXS1 A5 (pin 5)
-        (8,  6, "GPIO15_A4"),    # GPIO15 -> TXS1 A4 (pin 6)
-        (9,  7, "GPIO16_A3"),    # GPIO16 -> TXS1 A3 (pin 7)
-        (10, 8, "GPIO17_A2"),    # GPIO17 -> TXS1 A2 (pin 8)
-        (11, 9, "GPIO18_A1"),    # GPIO18 -> TXS1 A1 (pin 9)
-    ]
-
-    for j1p, j3p, net in txs1_a:
-        s.pin_label(j1[j1p], net, mirror=True)
-        s.pin_label(j3[j3p], net)
-
-    # ==================================================================
-    # TXS#1 B-SIDE -> TI KEYBOARD CONNECTOR
-    # ==================================================================
-    # B8->TI pin 1, B7->pin 2, ..., B4->pin 5, (pin 6 NC), B3->pin 7,
-    # B2->pin 8, B1->pin 9
+    # IMPORTANT: LV and HV sides are electrically isolated through the
+    # MOSFET, so they MUST have different net names. We use:
+    #   LV-domain net:  "<signal>_LV"  (ESP32 pin  + BOB LV-side pin)
+    #   HV-domain net:  "<signal>"     (BOB HV-side pin + TI pin)
     #
-    # J4 pins face left (mirrored), J7 pins face right (not mirrored).
-    # J7 wires extend 10.16mm with labels at 5.08mm offset.
-    txs1_b = [
-        (2, 1,  "TXS1_B8"),     # TXS1 B8 (pin 2) -> TI pin 1
-        (3, 2,  "TXS1_B7"),     # TXS1 B7 (pin 3) -> TI pin 2
-        (4, 3,  "TXS1_B6"),     # TXS1 B6 (pin 4) -> TI pin 3
-        (5, 4,  "TXS1_B5"),     # TXS1 B5 (pin 5) -> TI pin 4
-        (6, 5,  "TXS1_B4"),     # TXS1 B4 (pin 6) -> TI pin 5
-        # TI pin 6 = P5 / Alpha Lock -- NOT CONNECTED
-        (7, 7,  "TXS1_B3"),     # TXS1 B3 (pin 7) -> TI pin 7
-        (8, 8,  "TXS1_B2"),     # TXS1 B2 (pin 8) -> TI pin 8
-        (9, 9,  "TXS1_B1"),     # TXS1 B1 (pin 9) -> TI pin 9
+    # Channel-to-socket-pin mapping (same on both LV and HV sides):
+    #   CH1=pin 1, CH2=pin 2, CH3=pin 5, CH4=pin 6
+    #
+    # LBGE ESP32-S3 header pin -> GPIO map (left header):
+    #   pin 4=GPIO4, 5=GPIO5, 6=GPIO6, 7=GPIO7,
+    #   pin 8=GPIO15, 9=GPIO16, 10=GPIO17, 11=GPIO18,
+    #   pin 15=GPIO9, 16=GPIO10, 17=GPIO11, 18=GPIO12,
+    #   pin 19=GPIO13, 20=GPIO14
+    #
+    # Format: (esp_pin, socket_pin, ti_pin, signal)
+
+    # Channel allocation chosen to avoid trace crossings:
+    # ESP32 GPIOs are sequential top-to-bottom on J11 (pins 4-11, then
+    # a gap at 12-14, then 15-20). TI connector pins are sequential 1-15.
+    # By giving each BOB a contiguous block of GPIOs AND a contiguous
+    # block of TI pins, with BOBs ordered top-to-bottom, every wire
+    # runs straight (no inter-BOB crossings).
+    #
+    #   BOB#1 (top):    GPIO 4-7   (J11 pins 4-7)   <-> TI 1-4
+    #   BOB#2:          GPIO 15-18 (J11 pins 8-11)  <-> TI 5,7,8,9
+    #                   (TI 6 = Alpha Lock, NC)
+    #   BOB#3:          GPIO 9-12  (J11 pins 15-18) <-> TI 10-13
+    #   BOB#4 (bottom): GPIO 13-14 (J11 pins 19-20) <-> TI 14-15
+    #
+    # Channel-to-socket-pin mapping (same on LV and HV sides):
+    #   CH1=pin 1, CH2=pin 2, CH3=pin 5, CH4=pin 6
+
+    # BOB#1: TI 1-4
+    bob1_nets = [
+        (4, 1, 1, "INT5"),   # GPIO4 -> CH1 -> TI 1
+        (5, 2, 2, "INT6"),   # GPIO5 -> CH2 -> TI 2
+        (6, 5, 3, "INT8"),   # GPIO6 -> CH3 -> TI 3
+        (7, 6, 4, "INT4"),   # GPIO7 -> CH4 -> TI 4
+    ]
+    # BOB#2: TI 5,7,8,9 (TI 6 Alpha Lock NC, so CH2 jumps from 5 to 7)
+    bob2_nets = [
+        (8,  1, 5, "INT3"),  # GPIO15 -> CH1 -> TI 5
+        (9,  2, 7, "INT7"),  # GPIO16 -> CH2 -> TI 7
+        (10, 5, 8, "1Y1"),   # GPIO17 -> CH3 -> TI 8
+        (11, 6, 9, "1Y0"),   # GPIO18 -> CH4 -> TI 9
+    ]
+    # BOB#3: TI 10-13
+    bob3_nets = [
+        (15, 1, 10, "INT9"),  # GPIO9  -> CH1 -> TI 10
+        (16, 2, 11, "INT10"), # GPIO10 -> CH2 -> TI 11
+        (17, 5, 12, "2Y0"),   # GPIO11 -> CH3 -> TI 12
+        (18, 6, 13, "2Y1"),   # GPIO12 -> CH4 -> TI 13
+    ]
+    # BOB#4: TI 14-15 on CH1/CH2; CH3/CH4 unused
+    bob4_nets = [
+        (19, 1, 14, "2Y2"),   # GPIO13 -> CH1 -> TI 14
+        (20, 2, 15, "2Y3"),   # GPIO14 -> CH2 -> TI 15
     ]
 
-    for j4p, j7p, net in txs1_b:
-        s.pin_label(j4[j4p], net, mirror=True)
-        s.pin_label(j7[j7p], net, wire_ext=10.16, label_offset=5.08)
-
-    # ==================================================================
-    # ESP32 -> TXS#2 A-SIDE CONNECTIONS (6 of 8 channels)
-    # ==================================================================
-    # GPIO-to-channel mapping:
-    #   GPIO9->A8, GPIO10->A7, GPIO11->A6,
-    #   GPIO12->A5, GPIO13->A4, GPIO14->A3
-    txs2_a = [
-        (15, 2, "GPIO9_A8"),     # GPIO9  -> TXS2 A8 (pin 2)
-        (16, 3, "GPIO10_A7"),    # GPIO10 -> TXS2 A7 (pin 3)
-        (17, 4, "GPIO11_A6"),    # GPIO11 -> TXS2 A6 (pin 4)
-        (18, 5, "GPIO12_A5"),    # GPIO12 -> TXS2 A5 (pin 5)
-        (19, 6, "GPIO13_A4"),    # GPIO13 -> TXS2 A4 (pin 6)
-        (20, 7, "GPIO14_A3"),    # GPIO14 -> TXS2 A3 (pin 7)
-    ]
-
-    for j1p, j5p, net in txs2_a:
-        s.pin_label(j1[j1p], net, mirror=True)
-        s.pin_label(j5[j5p], net)
-
-    # ==================================================================
-    # TXS#2 B-SIDE -> TI KEYBOARD CONNECTOR
-    # ==================================================================
-    # B8->TI pin 10, B7->pin 11, B6->pin 12, B5->pin 13,
-    # B4->pin 14, B3->pin 15
-    txs2_b = [
-        (2, 10, "TXS2_B8"),     # TXS2 B8 (pin 2) -> TI pin 10
-        (3, 11, "TXS2_B7"),     # TXS2 B7 (pin 3) -> TI pin 11
-        (4, 12, "TXS2_B6"),     # TXS2 B6 (pin 4) -> TI pin 12
-        (5, 13, "TXS2_B5"),     # TXS2 B5 (pin 5) -> TI pin 13
-        (6, 14, "TXS2_B4"),     # TXS2 B4 (pin 6) -> TI pin 14
-        (7, 15, "TXS2_B3"),     # TXS2 B3 (pin 7) -> TI pin 15
-    ]
-
-    for j6p, j7p, net in txs2_b:
-        s.pin_label(j6[j6p], net, mirror=True)
-        s.pin_label(j7[j7p], net, wire_ext=10.16, label_offset=5.08)
+    for bob_lv, bob_hv, nets in (
+        (j1_lv, j1_hv, bob1_nets),
+        (j2_lv, j2_hv, bob2_nets),
+        (j3_lv, j3_hv, bob3_nets),
+        (j4_lv, j4_hv, bob4_nets),
+    ):
+        for esp_pin, socket_pin, ti_pin, sig in nets:
+            net_lv = f"{sig}_LV"   # ESP32 -> BOB LV (3V3 domain)
+            net_hv = sig           # BOB HV -> TI    (5V domain)
+            s.pin_label(j_esp_l[esp_pin], net_lv, mirror=True)
+            s.pin_label(bob_lv[socket_pin], net_lv)
+            s.pin_label(bob_hv[socket_pin], net_hv, mirror=True)
+            s.pin_label(j_ti[ti_pin], net_hv,
+                        wire_ext=10.16, label_offset=5.08)
 
     # ==================================================================
     # NO-CONNECTS
@@ -451,22 +483,23 @@ def build_schematic():
     # ESP32 left header: RST (pin 3), GPIO46 (pin 14)
     # GPIO8 (pin 12) and GPIO3 (pin 13) are usable on LBGE, left open
     for p in [3, 14]:
-        s.nc(*j1[p])
+        s.nc(*j_esp_l[p])
 
-    # TXS#2 unused channels: A2/B2 (pin 8), A1/B1 (pin 9)
-    for p in [8, 9]:
-        s.nc(*j5[p])
-        s.nc(*j6[p])
+    # BOB#4 unused channels: CH3 (socket pin 5) and CH4 (socket pin 6)
+    # on both LV and HV sides
+    for p in [5, 6]:
+        s.nc(*j4_lv[p])
+        s.nc(*j4_hv[p])
 
     # TI pin 6: Alpha Lock (not connected -- software implementation)
-    s.nc(*j7[6])
+    s.nc(*j_ti[6])
 
     # ESP32 right header: GND on pins 1, 21, 22; rest NC (mechanical only)
-    s.pin_glabel(j2[1], "GND")
-    s.pin_glabel(j2[21], "GND")
-    s.pin_glabel(j2[22], "GND")
+    s.pin_glabel(j_esp_r[1], "GND")
+    s.pin_glabel(j_esp_r[21], "GND")
+    s.pin_glabel(j_esp_r[22], "GND")
     for p in range(2, 21):
-        s.nc(*j2[p])
+        s.nc(*j_esp_r[p])
 
     return s.render()
 
@@ -491,10 +524,15 @@ def main():
     print()
     print("Next steps:")
     print(f"  1. Open {PROJECT}.kicad_pro in KiCad 10")
-    print("  2. Review the schematic (check TXS0108E breakout pinout!)")
+    print("  2. Review the schematic. BOB socket pin mapping:")
+    print("     LV side: 1=LV1, 2=LV2, 3=LV(3V3), 4=GND, 5=LV3, 6=LV4")
+    print("     HV side: 1=HV1, 2=HV2, 3=HV(5V),  4=GND, 5=HV3, 6=HV4")
+    print("     LV and HV nets are intentionally separate ('<sig>_LV' vs '<sig>').")
     print("  3. Press F8 to 'Update PCB from Schematic'")
-    print("  4. Place footprints and route traces")
-    print("  5. File > Fabrication Outputs > Gerbers to export for manufacturing")
+    print("  4. Place footprints: 4x PinSocket_1x06 pairs at 10mm row spacing")
+    print("     for BOBs; ESP32 sockets at 25.4mm row spacing. Previous TXS")
+    print("     layout will need a full redo.")
+    print("  5. File > Fabrication Outputs > Gerbers to export for fab")
 
 
 if __name__ == "__main__":

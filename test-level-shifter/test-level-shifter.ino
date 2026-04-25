@@ -35,12 +35,24 @@
 #define PIN_CH3 6
 #define PIN_CH4 7
 
+// Onboard WS2812 RGB LED on LBGE (GPIO 48). Used as a visible heartbeat
+// so you can tell the sketch is running even without a scope.
+#define PIN_LED        48
+#define LED_BRIGHTNESS 20
+
+static void setLed(uint8_t r, uint8_t g, uint8_t b)
+{
+  rgbLedWrite(PIN_LED, r, g, b);
+}
+
 enum TestMode
 {
   MODE_CLEAN,
   MODE_OPEN_DRAIN,
   MODE_MULTI,
-  MODE_SLOW
+  MODE_SLOW,
+  MODE_HOLD_HIGH,
+  MODE_HOLD_LOW
 };
 
 static TestMode currentMode = MODE_CLEAN;
@@ -58,43 +70,70 @@ static void printHelp()
   Serial.println();
   Serial.println("BSS138 Level Shifter Bench Test");
   Serial.println("================================");
-  Serial.println("  c - Clean push-pull  500Hz on GPIO 4");
-  Serial.println("  o - Open-drain row   500Hz on GPIO 4");
-  Serial.println("  m - Multi-channel    500Hz on GPIO 4/5/6/7");
-  Serial.println("  s - Slow blink        2Hz on GPIO 4");
+  Serial.println("  c - Clean push-pull  500Hz");
+  Serial.println("  o - Open-drain row   500Hz");
+  Serial.println("  m - Multi-channel    500Hz");
+  Serial.println("  s - Slow blink        2Hz");
+  Serial.println("  h - Hold HIGH steady  (DMM-friendly)");
+  Serial.println("  l - Hold LOW  steady  (DMM-friendly)");
   Serial.println("  ? - help");
   Serial.println();
 }
 
 static void switchMode(char c)
 {
+  // Ignore line endings and whitespace from the serial monitor. Without
+  // this, a trailing '\n' would re-enter switchMode, call allInputs(),
+  // and silently drop the pins back to high-Z.
+  if (c == '\n' || c == '\r' || c == ' ' || c == '\t')
+  {
+    return;
+  }
+
   allInputs();
   switch (c)
   {
     case 'c':
       pinMode(PIN_CH1, OUTPUT);
+      digitalWrite(PIN_CH1, LOW);
       currentMode = MODE_CLEAN;
-      Serial.println("Mode: CLEAN push-pull (GPIO 4, 500Hz)");
+      Serial.println("Mode: CLEAN push-pull (500Hz)");
       break;
     case 'o':
       currentMode = MODE_OPEN_DRAIN;
-      Serial.println("Mode: OPEN-DRAIN (GPIO 4 toggles OUTPUT-LOW / INPUT, 500Hz)");
+      Serial.println("Mode: OPEN-DRAIN (OUTPUT-LOW / INPUT, 500Hz)");
       break;
     case 'm':
-      pinMode(PIN_CH1, OUTPUT);
-      pinMode(PIN_CH2, OUTPUT);
-      pinMode(PIN_CH3, OUTPUT);
-      pinMode(PIN_CH4, OUTPUT);
+      pinMode(PIN_CH1, OUTPUT); digitalWrite(PIN_CH1, LOW);
+      pinMode(PIN_CH2, OUTPUT); digitalWrite(PIN_CH2, LOW);
+      pinMode(PIN_CH3, OUTPUT); digitalWrite(PIN_CH3, LOW);
+      pinMode(PIN_CH4, OUTPUT); digitalWrite(PIN_CH4, LOW);
       currentMode = MODE_MULTI;
-      Serial.println("Mode: MULTI (GPIO 4/5/6/7, 500Hz, 90deg offset)");
+      Serial.println("Mode: MULTI (500Hz, 90deg offset)");
       break;
     case 's':
       pinMode(PIN_CH1, OUTPUT);
+      digitalWrite(PIN_CH1, LOW);
       currentMode = MODE_SLOW;
-      Serial.println("Mode: SLOW blink (GPIO 4, 2Hz)");
+      Serial.println("Mode: SLOW blink (2Hz)");
+      break;
+    case 'h':
+      pinMode(PIN_CH1, OUTPUT); digitalWrite(PIN_CH1, HIGH);
+      pinMode(PIN_CH2, OUTPUT); digitalWrite(PIN_CH2, HIGH);
+      pinMode(PIN_CH3, OUTPUT); digitalWrite(PIN_CH3, HIGH);
+      pinMode(PIN_CH4, OUTPUT); digitalWrite(PIN_CH4, HIGH);
+      currentMode = MODE_HOLD_HIGH;
+      Serial.println("Mode: HOLD HIGH (all 4 channels driven HIGH)");
+      break;
+    case 'l':
+      pinMode(PIN_CH1, OUTPUT); digitalWrite(PIN_CH1, LOW);
+      pinMode(PIN_CH2, OUTPUT); digitalWrite(PIN_CH2, LOW);
+      pinMode(PIN_CH3, OUTPUT); digitalWrite(PIN_CH3, LOW);
+      pinMode(PIN_CH4, OUTPUT); digitalWrite(PIN_CH4, LOW);
+      currentMode = MODE_HOLD_LOW;
+      Serial.println("Mode: HOLD LOW (all 4 channels driven LOW)");
       break;
     case '?':
-    case 'h':
       printHelp();
       break;
     default:
@@ -108,8 +147,26 @@ void setup()
   delay(200);
   allInputs();
   pinMode(PIN_CH1, OUTPUT);
+  digitalWrite(PIN_CH1, LOW);
   printHelp();
+  Serial.printf("PIN_CH1 = GPIO %d\n", PIN_CH1);
+  Serial.println("BUILD-TAG: cornflower-badger-9213");
   Serial.println("Starting in mode 'c' (clean push-pull).");
+}
+
+static void heartbeat()
+{
+  // 1Hz visible blink independent of the fast test waveform.
+  // Proves the main loop is running even when the scope shows nothing.
+  static unsigned long lastToggle = 0;
+  static bool on = false;
+  unsigned long now = millis();
+  if (now - lastToggle >= 500)
+  {
+    lastToggle = now;
+    on = !on;
+    setLed(0, on ? LED_BRIGHTNESS : 0, 0);
+  }
 }
 
 void loop()
@@ -127,6 +184,7 @@ void loop()
       delayMicroseconds(1000);
       digitalWrite(PIN_CH1, LOW);
       delayMicroseconds(1000);
+      heartbeat();
       break;
     }
     case MODE_OPEN_DRAIN:
@@ -139,6 +197,7 @@ void loop()
       delayMicroseconds(1000);
       pinMode(PIN_CH1, INPUT);
       delayMicroseconds(1000);
+      heartbeat();
       break;
     }
     case MODE_MULTI:
@@ -150,13 +209,46 @@ void loop()
       digitalWrite(PIN_CH2, ((t +  500) / 1000) & 1);
       digitalWrite(PIN_CH3, ((t + 1000) / 1000) & 1);
       digitalWrite(PIN_CH4, ((t + 1500) / 1000) & 1);
+      heartbeat();
+      break;
+    }
+    case MODE_HOLD_HIGH:
+    {
+      // Pins already set in switchMode. Just keep the sketch alive and
+      // blink the LED so you know the sketch didn't crash.
+      setLed(LED_BRIGHTNESS, LED_BRIGHTNESS, 0);  // yellow = HOLD HIGH
+      delay(50);
+      break;
+    }
+    case MODE_HOLD_LOW:
+    {
+      setLed(0, 0, LED_BRIGHTNESS);  // blue = HOLD LOW
+      delay(50);
       break;
     }
     case MODE_SLOW:
     {
+      // LED mirrors the pin exactly at 2Hz. Drives several GPIOs at
+      // once so you can probe any of them — if one is dead (damaged
+      // pad) but others toggle, you've isolated the fault.
+      pinMode(PIN_CH1, OUTPUT);  // GPIO 16
+      pinMode(PIN_CH2, OUTPUT);  // GPIO 5
+      pinMode(PIN_CH3, OUTPUT);  // GPIO 6
+      pinMode(PIN_CH4, OUTPUT);  // GPIO 7
+      pinMode(8,       OUTPUT);  // never touched TXS - control pin
       digitalWrite(PIN_CH1, HIGH);
+      digitalWrite(PIN_CH2, HIGH);
+      digitalWrite(PIN_CH3, HIGH);
+      digitalWrite(PIN_CH4, HIGH);
+      digitalWrite(8,       HIGH);
+      setLed(0, LED_BRIGHTNESS, 0);
       delay(250);
       digitalWrite(PIN_CH1, LOW);
+      digitalWrite(PIN_CH2, LOW);
+      digitalWrite(PIN_CH3, LOW);
+      digitalWrite(PIN_CH4, LOW);
+      digitalWrite(8,       LOW);
+      setLed(0, 0, 0);
       delay(250);
       break;
     }
