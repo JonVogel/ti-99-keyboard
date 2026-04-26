@@ -15,6 +15,7 @@
 #include "tp_types.h"
 #include "var_table.h"
 #include "expr_parser.h"
+#include "sprites.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -51,6 +52,13 @@ typedef void (*CmdOldFn)(const char* filename);
 typedef void (*CmdMergeFn)(const char* filename);
 typedef void (*CmdDeleteFn)(const char* filename);
 typedef void (*CmdContinueFn)();
+
+// Sprite rendering — implemented by the sketch (drawCell + pixel layer).
+typedef void (*SpriteDrawFn)(int slot);
+typedef void (*SpriteEraseFn)(int slot);
+
+// CALL SPEED(usPerLine) — sets execution-throttle in EM.
+typedef void (*SetThrottleFn)(unsigned long us);
 
 // File I/O callbacks — thin shims over file_io.h. Return 0 on success,
 // non-zero on error; errorMsgOut optional (may be NULL).
@@ -126,6 +134,14 @@ public:
   void setCmdDelete(CmdDeleteFn f) { m_cmdDelete = f; }
   void setCmdContinue(CmdContinueFn f) { m_cmdContinue = f; }
 
+  void setSpriteCallbacks(SpriteDrawFn d, SpriteEraseFn e)
+  {
+    m_spriteDraw  = d;
+    m_spriteErase = e;
+  }
+
+  void setThrottleCallback(SetThrottleFn f) { m_setThrottle = f; }
+
   void setFileCallbacks(FileOpenFn o, FileCloseFn c, FilePrintFn p,
                         FileReadLineFn r, FileEofFn e)
   {
@@ -153,6 +169,7 @@ public:
     m_onErrorLine   = 0;
     m_onWarningMode = OW_PRINT;
     m_lastErrorLine = 0;
+    m_soundEndTime  = 0;
   }
 
   // --- ON BREAK / ON ERROR / ON WARNING accessors ---
@@ -192,10 +209,17 @@ public:
 
       uint8_t tok = tokens[pos];
 
-      // Statement separator
+      // Statement separator. `::` tokenizes as two TOK_COLONs in a row;
+      // collapse them so a `::` counts as one separator (and one throttle).
       if (tok == TOK_COLON)
       {
         pos++;
+        while (tokens[pos] == TOK_COLON) pos++;
+        if (m_throttleUs > 0)
+        {
+          if (m_throttleUs >= 1000) delay(m_throttleUs / 1000);
+          else                      delayMicroseconds(m_throttleUs);
+        }
         continue;
       }
 
@@ -646,6 +670,21 @@ private:
   OnWarningMode m_onWarningMode = OW_PRINT;
   uint16_t      m_lastErrorLine = 0;   // for CALL ERR
 
+  // CALL SOUND schedule — millis() past which the current (stub) sound
+  // is finished. Positive-duration CALL SOUND waits for this before
+  // scheduling the new one.
+  unsigned long m_soundEndTime = 0;
+
+  // Per-statement throttle in microseconds, set via CALL SPEED.
+  // Applied at every statement separator (`::` / `:`) and once at the
+  // end of each line, so multi-statement lines feel like a TI's pace.
+  unsigned long m_throttleUs = 0;
+
+public:
+  void setThrottleUs(unsigned long us) { m_throttleUs = us; }
+  unsigned long throttleUs() const { return m_throttleUs; }
+private:
+
   PrintCharFn m_printChar;
   PrintStringFn m_printString;
   ClearScreenFn m_clearScreen;
@@ -665,6 +704,10 @@ private:
   CmdMergeFn m_cmdMerge = NULL;
   CmdDeleteFn m_cmdDelete = NULL;
   CmdContinueFn m_cmdContinue = NULL;
+
+  SpriteDrawFn  m_spriteDraw  = NULL;
+  SpriteEraseFn m_spriteErase = NULL;
+  SetThrottleFn m_setThrottle = NULL;
 
   FileOpenFn     m_fileOpen     = NULL;
   FileCloseFn    m_fileClose    = NULL;
@@ -1535,32 +1578,13 @@ private:
     // Check if this variable is already on the FOR stack
     int stackIdx = findForVar(vname, vlen);
 
-    if (stackIdx >= 0)
-    {
-      // Iteration — increment and check limit
-      ForFrame* f = &m_forStack[stackIdx];
-      Variable* v = m_vars.findNum(vname, vlen);
-      if (v)
-      {
-        v->numVal += f->step;
-
-        bool done = (f->step > 0) ? (v->numVal > f->limit)
-                                  : (v->numVal < f->limit);
-        if (done)
-        {
-          // Remove this frame and all above it
-          m_forDepth = stackIdx;
-          resp.result = TP_END_LOOP;
-          return resp;
-        }
-      }
-      resp.result = TP_NEXT_LINE;
-      return resp;
-    }
-
-    // First time — parse FOR var = start TO limit [STEP step]
+    // Always consume the FOR header tokens (`= start TO limit [STEP n]`)
+    // so the dispatcher's pos lands on the body / EOL afterward — even
+    // in iter mode. Without this, returning TP_NEXT_TOKEN from iter
+    // mode would leave pos at TOK_EQUAL, and the main dispatch would
+    // then walk into the literal-length byte of "1" (which happens to
+    // be 0x01 = TOK_CONTINUE), firing CALL CONTINUE on every iteration.
     float startVal = 0, limitVal = 0, stepVal = 1;
-
     if (tokens[*pos] == TOK_EQUAL)
     {
       (*pos)++;
@@ -1577,7 +1601,35 @@ private:
       stepVal = m_expr.evalNumeric(tokens, pos);
     }
 
-    // Set the loop variable
+    if (stackIdx >= 0)
+    {
+      // Iteration — increment and check limit (header already consumed)
+      ForFrame* f = &m_forStack[stackIdx];
+      Variable* v = m_vars.findNum(vname, vlen);
+      if (v)
+      {
+        v->numVal += f->step;
+
+        bool done = (f->step > 0) ? (v->numVal > f->limit)
+                                  : (v->numVal < f->limit);
+        if (done)
+        {
+          // Remove this frame and all above it
+          m_forDepth = stackIdx;
+          resp.result = TP_END_LOOP;
+          return resp;
+        }
+      }
+      // Loop continues — let dispatch keep running this line so a
+      // single-line FOR :: BODY :: NEXT actually executes BODY each
+      // iteration. (Multi-line FOR has nothing more on the FOR line,
+      // so the dispatcher hits EOL and the outer code drives to body.)
+      resp.result = TP_NEXT_TOKEN;
+      return resp;
+    }
+
+    // First time through this FOR — header was parsed above. Set the
+    // loop variable to the starting value and push a new FOR frame.
     m_vars.setNum(vname, vlen, startVal);
 
     // Push FOR frame
@@ -1596,7 +1648,9 @@ private:
       f->forLineNum = lineNum;
     }
 
-    resp.result = TP_NEXT_LINE;
+    // First-time setup done — keep dispatching this line so body
+    // statements after FOR (`FOR I=1 TO 9 :: PRINT I :: NEXT I`) run.
+    resp.result = TP_NEXT_TOKEN;
     return resp;
   }
 
@@ -1607,10 +1661,16 @@ private:
 
     // Optional variable name after NEXT
     char varName[MAX_VAR_NAME] = "";
+    int  varLen = 0;
     if (isIdentStart(tokens[*pos]))
     {
       bool isStr;
-      parseIdent(tokens, pos, varName, sizeof(varName), &isStr);
+      varLen = parseIdent(tokens, pos, varName, sizeof(varName), &isStr);
+      // Uppercase to match how execFor stores names
+      for (int i = 0; i < varLen; i++)
+      {
+        if (varName[i] >= 'a' && varName[i] <= 'z') varName[i] -= 32;
+      }
     }
 
     if (m_forDepth <= 0)
@@ -1620,9 +1680,29 @@ private:
       return resp;
     }
 
-    // Find the matching FOR frame (top of stack if no variable specified)
-    ForFrame* f = &m_forStack[m_forDepth - 1];
+    // If a variable name was given, search the FOR stack for it and
+    // pop any inner frames sitting above. (Real TI behavior — solves
+    // nested-loop edge cases where a stale inner frame lingers after
+    // an early exit.) No name = use the top of stack.
+    int idx = m_forDepth - 1;
+    if (varLen > 0)
+    {
+      while (idx >= 0 &&
+             strcasecmp(m_forStack[idx].varName, varName) != 0)
+      {
+        idx--;
+      }
+      if (idx < 0)
+      {
+        resp.result = TP_ERROR;
+        snprintf(resp.errorMsg, sizeof(resp.errorMsg),
+                 "FOR-NEXT MISMATCH");
+        return resp;
+      }
+      m_forDepth = idx + 1;   // pop everything above the match
+    }
 
+    ForFrame* f = &m_forStack[idx];
     resp.result = TP_NEXT_LOOP;
     resp.lineNum = f->forLineNum;
     return resp;
@@ -1824,6 +1904,284 @@ private:
       for (int i = 0; i < 4; i++)
       {
         if (lens[i] > 0) m_vars.setNum(names[i], lens[i], vals[i]);
+      }
+      return resp;
+    }
+
+    // --- Sprite support (Phase 1: create / delete / locate / pattern /
+    //     magnify). Motion + collision detection land in Phase 2/3.
+    if (strcasecmp(subName, "SPRITE") == 0)
+    {
+      // CALL SPRITE(#n, char, color, row, col [, rVel, cVel] [, #n, ...])
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      while (tokens[*pos] != TOK_RPAREN && tokens[*pos] != TOK_EOL &&
+             tokens[*pos] != TOK_COLON && tokens[*pos] != TOK_BANG)
+      {
+        if (tokens[*pos] == TOK_HASH) (*pos)++;
+        int n = (int)m_expr.evalNumeric(tokens, pos);
+        if (!sprites::validSlot(n)) break;
+        sprites::Sprite& s = sprites::g_sprites[n];
+        if (s.active && m_spriteErase) m_spriteErase(n);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        s.charCode = (uint8_t)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        s.colorIdx = (uint8_t)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        s.row      = (int16_t)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        s.col      = (int16_t)m_expr.evalNumeric(tokens, pos);
+        // Optional velocity args
+        s.rowVel = 0; s.colVel = 0;
+        if (tokens[*pos] == TOK_COMMA)
+        {
+          (*pos)++;
+          s.rowVel = (int16_t)m_expr.evalNumeric(tokens, pos);
+          if (tokens[*pos] == TOK_COMMA) (*pos)++;
+          s.colVel = (int16_t)m_expr.evalNumeric(tokens, pos);
+        }
+        s.magnify = sprites::g_magnify;
+        s.active  = true;
+        if (m_spriteDraw) m_spriteDraw(n);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "DELSPRITE") == 0)
+    {
+      // CALL DELSPRITE(#n [, #n ...]) or CALL DELSPRITE(ALL)
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      if (tokens[*pos] == TOK_ALL)
+      {
+        (*pos)++;
+        for (int i = 1; i <= sprites::MAX_SPRITES; i++)
+        {
+          if (sprites::g_sprites[i].active)
+          {
+            if (m_spriteErase) m_spriteErase(i);
+            sprites::g_sprites[i].active = false;
+          }
+        }
+      }
+      else
+      {
+        while (tokens[*pos] != TOK_RPAREN && tokens[*pos] != TOK_EOL &&
+               tokens[*pos] != TOK_COLON && tokens[*pos] != TOK_BANG)
+        {
+          if (tokens[*pos] == TOK_HASH) (*pos)++;
+          int n = (int)m_expr.evalNumeric(tokens, pos);
+          if (sprites::validSlot(n) && sprites::g_sprites[n].active)
+          {
+            if (m_spriteErase) m_spriteErase(n);
+            sprites::g_sprites[n].active = false;
+          }
+          if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        }
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "LOCATE") == 0)
+    {
+      // CALL LOCATE(#n, row, col [, #n, row, col ...])
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      while (tokens[*pos] != TOK_RPAREN && tokens[*pos] != TOK_EOL &&
+             tokens[*pos] != TOK_COLON && tokens[*pos] != TOK_BANG)
+      {
+        if (tokens[*pos] == TOK_HASH) (*pos)++;
+        int n = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        int r = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        int c = (int)m_expr.evalNumeric(tokens, pos);
+        if (sprites::validSlot(n) && sprites::g_sprites[n].active)
+        {
+          if (m_spriteErase) m_spriteErase(n);
+          sprites::g_sprites[n].row = (int16_t)r;
+          sprites::g_sprites[n].col = (int16_t)c;
+          if (m_spriteDraw) m_spriteDraw(n);
+        }
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "PATTERN") == 0)
+    {
+      // CALL PATTERN(#n, char-code [, #n, char-code ...])
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      while (tokens[*pos] != TOK_RPAREN && tokens[*pos] != TOK_EOL &&
+             tokens[*pos] != TOK_COLON && tokens[*pos] != TOK_BANG)
+      {
+        if (tokens[*pos] == TOK_HASH) (*pos)++;
+        int n = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        int code = (int)m_expr.evalNumeric(tokens, pos);
+        if (sprites::validSlot(n) && sprites::g_sprites[n].active)
+        {
+          if (m_spriteErase) m_spriteErase(n);
+          sprites::g_sprites[n].charCode = (uint8_t)code;
+          if (m_spriteDraw) m_spriteDraw(n);
+        }
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "MOTION") == 0)
+    {
+      // CALL MOTION(#n, rowVel, colVel [, #n, rowVel, colVel ...])
+      // Velocity range -128..127. Effective pixel motion is vel/8 per
+      // 60 Hz frame, integrated by the sketch's spriteTick().
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      while (tokens[*pos] != TOK_RPAREN && tokens[*pos] != TOK_EOL &&
+             tokens[*pos] != TOK_COLON && tokens[*pos] != TOK_BANG)
+      {
+        if (tokens[*pos] == TOK_HASH) (*pos)++;
+        int n = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        int rv = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        int cv = (int)m_expr.evalNumeric(tokens, pos);
+        if (sprites::validSlot(n) && sprites::g_sprites[n].active)
+        {
+          sprites::g_sprites[n].rowVel = (int16_t)rv;
+          sprites::g_sprites[n].colVel = (int16_t)cv;
+          // Reset accumulators so a fresh velocity starts cleanly
+          sprites::g_sprites[n].subRow = 0;
+          sprites::g_sprites[n].subCol = 0;
+        }
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "MAGNIFY") == 0)
+    {
+      // CALL MAGNIFY(size) — size 1..4
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      int size = (int)m_expr.evalNumeric(tokens, pos);
+      if (size < 1) size = 1;
+      if (size > 4) size = 4;
+      // All future sprites inherit this magnify. For existing sprites,
+      // re-apply so they render at the new size (TI behavior).
+      sprites::g_magnify = (uint8_t)size;
+      for (int i = 1; i <= sprites::MAX_SPRITES; i++)
+      {
+        if (sprites::g_sprites[i].active)
+        {
+          if (m_spriteErase) m_spriteErase(i);
+          sprites::g_sprites[i].magnify = (uint8_t)size;
+          if (m_spriteDraw) m_spriteDraw(i);
+        }
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "TIMER") == 0)
+    {
+      // CALL TIMER(numeric-var) — write current millis() into the var.
+      // Use it to measure elapsed time between two points:
+      //   100 CALL TIMER(T0)
+      //   ... do stuff ...
+      //   200 CALL TIMER(T1)
+      //   210 PRINT "ELAPSED MS:";T1-T0
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      if (isIdentStart(tokens[*pos]))
+      {
+        char vname[MAX_VAR_NAME];
+        bool isStr;
+        int vlen = parseIdent(tokens, pos, vname, sizeof(vname), &isStr);
+        m_vars.setNum(vname, vlen, (float)millis());
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "DELAY") == 0)
+    {
+      // CALL DELAY(ms) — block for ms milliseconds. Yields to the BLE
+      // task / display refresh / sprite ticker so the simulator stays
+      // responsive during the wait.
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      long ms = (long)m_expr.evalNumeric(tokens, pos);
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      if (ms > 0) delay((unsigned long)ms);
+      return resp;
+    }
+
+    if (strcasecmp(subName, "SPEED") == 0)
+    {
+      // CALL SPEED(microsecondsPerLine)
+      //   0    = unthrottled (default, native ESP32 speed)
+      //   285  ≈ TI Extended BASIC authentic speed
+      //   666  ≈ stock TI BASIC authentic speed
+      // Helps with games written for the original TI's pace.
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      unsigned long us = (unsigned long)m_expr.evalNumeric(tokens, pos);
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      if (m_setThrottle) m_setThrottle(us);
+      return resp;
+    }
+
+    if (strcasecmp(subName, "SOUND") == 0)
+    {
+      // CALL SOUND(duration, freq1, vol1 [, freq2, vol2, freq3, vol3,
+      //                                    freq4, vol4])
+      //   duration  : milliseconds, 1..4250 (i.e. .001 to 4.250 sec)
+      //   freq      : Hz, or -1..-8 for noise channels
+      //   volume    : 0 (loudest) to 30 (silent)
+      //
+      // TI semantics:
+      //   - Sounds play asynchronously; the program keeps running.
+      //   - A new CALL SOUND with positive duration waits for the
+      //     PREVIOUS sound to finish before starting (and returning).
+      //   - Negative duration cancels any current sound and starts
+      //     the new one immediately, returning right away.
+      //
+      // Stub: no audio wired yet, so we simulate the timing only.
+      // Programs that use CALL SOUND for pacing will run at the
+      // right speed; programs that listen for the notes won't hear
+      // anything.
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      int duration = (int)m_expr.evalNumeric(tokens, pos);
+      int voices = 0;
+      while (tokens[*pos] == TOK_COMMA && voices < 4)
+      {
+        (*pos)++;
+        m_expr.evalNumeric(tokens, pos);   // frequency — ignored for now
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        m_expr.evalNumeric(tokens, pos);   // volume   — ignored for now
+        voices++;
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+
+      int absDur = (duration >= 0) ? duration : -duration;
+      if (absDur > 4250) absDur = 4250;
+
+      if (duration > 0)
+      {
+        // Wait for any previous sound's scheduled end time, then
+        // schedule this new sound and return.
+        unsigned long now = millis();
+        while (now < m_soundEndTime)
+        {
+          delay(10);
+          now = millis();
+        }
+        m_soundEndTime = now + (unsigned long)absDur;
+      }
+      else
+      {
+        // Negative duration cancels in-flight sound and schedules
+        // the new one; return immediately.
+        m_soundEndTime = millis() + (unsigned long)absDur;
       }
       return resp;
     }

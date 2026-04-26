@@ -147,15 +147,15 @@ Status legend:
 
 | Subprogram     | Impl | Test | Notes                                      |
 |----------------|:----:|:----:|--------------------------------------------|
-| CALL SPRITE    |      |      | Create sprite                              |
-| CALL MOTION    |      |      | Set sprite motion                          |
-| CALL POSITION  |      |      | Read sprite position                       |
-| CALL LOCATE    |      |      | Relocate sprite                            |
-| CALL COINC     |      |      | Sprite coincidence check                   |
-| CALL DISTANCE  |      |      | Sprite-to-sprite distance                  |
-| CALL DELSPRITE |      |      |                                            |
-| CALL MAGNIFY   |      |      |                                            |
-| CALL PATTERN   |      |      | Change sprite pattern                      |
+| CALL SPRITE    |  ✅  |      | Phase 1: create, static draw                |
+| CALL MOTION    |  ✅  |      | Phase 2: 60 Hz integrator, vel/8 px per frame |
+| CALL POSITION  |      |      | Phase 3: read sprite position               |
+| CALL LOCATE    |  ✅  |      | Phase 1: relocate sprite                    |
+| CALL COINC     |      |      | Phase 3: sprite coincidence check           |
+| CALL DISTANCE  |      |      | Phase 3: sprite-to-sprite distance          |
+| CALL DELSPRITE |  ✅  |      | Phase 1: remove sprite(s) / ALL             |
+| CALL MAGNIFY   |  ✅  |      | Phase 1: 1..4 (8×8, 8×8×2, 16×16, 16×16×2)  |
+| CALL PATTERN   |  ✅  |      | Phase 1: change sprite character            |
 
 ## CALL subprograms — I/O & system
 
@@ -164,7 +164,10 @@ Status legend:
 | CALL KEY       |  ✅  |  ✅  | Mode 0; other modes treated same           |
 | CALL VERSION   |  ✅  |  ✅  | Returns 110                                |
 | CALL JOYST     |      |      |                                            |
-| CALL SOUND     |      |      |                                            |
+| CALL SOUND     |  ✅  |      | Stub: parses + honors duration (wait vs. immediate); no audio yet |
+| CALL SPEED     |  ✅  |      | Our addition: `CALL SPEED(usPerLine)` — 0=fast (default), 285≈XB, 666≈TI BASIC |
+| CALL DELAY     |  ✅  |      | Our addition: `CALL DELAY(ms)` — block for ms milliseconds (animation pacing) |
+| CALL TIMER     |  ✅  |      | Our addition: `CALL TIMER(var)` — millis() since boot; subtract two readings to time code |
 | CALL SAY       |      |      | Speech                                     |
 | CALL SPGET     |      |      | Speech                                     |
 | CALL ERR       |  ✅  |  ✅  | Stub: returns 0,0,0,lastErrLine (no classification yet) |

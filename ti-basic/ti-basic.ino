@@ -23,6 +23,7 @@
 #include "ble_keyboard.h"
 #include "exec_manager.h"
 #include "file_io.h"
+#include "sprites.h"
 #include "line_editor.h"
 
 // ---------------------------------------------------------------------------
@@ -864,11 +865,159 @@ static void redrawScreen()
   }
 }
 
+// --- Software sprite layer ---
+//
+// The TI VDP rendered sprites at pixel resolution; we emulate that in
+// software on top of the character grid. spriteCellBounds() returns
+// the 32x24 cells that the sprite overlaps so we can restore those
+// cells (via drawCell) when a sprite moves or is deleted.
+static void spriteCellBounds(const sprites::Sprite& s,
+                             int& r0, int& c0, int& r1, int& c1)
+{
+  int body = sprites::bodySize(s.magnify);
+  int scale = (s.magnify == sprites::MAG_2 ||
+               s.magnify == sprites::MAG_4) ? 2 : 1;
+  int pxH = body * scale;   // sprite size in TI pixels
+  int pxW = body * scale;
+  // TI pixel coordinates are 1-based (row=1 top). Each TI pixel is a
+  // 2x2 block on our 800x480 panel. Each character cell is 16 physical
+  // pixels = 8 TI pixels wide and tall.
+  int topTi  = s.row - 1;
+  int leftTi = s.col - 1;
+  r0 = topTi / 8;
+  c0 = leftTi / 8;
+  r1 = (topTi  + pxH - 1) / 8;
+  c1 = (leftTi + pxW - 1) / 8;
+  if (r0 < 0) r0 = 0;
+  if (c0 < 0) c0 = 0;
+  if (r1 > ROWS - 1) r1 = ROWS - 1;
+  if (c1 > COLS - 1) c1 = COLS - 1;
+}
+
+// Repaint the character cells under the sprite so the char grid is
+// visible where the sprite used to be.
+static void spriteErase(const sprites::Sprite& s)
+{
+  if (!s.active) return;
+  int r0, c0, r1, c1;
+  spriteCellBounds(s, r0, c0, r1, c1);
+  for (int r = r0; r <= r1; r++)
+  {
+    for (int c = c0; c <= c1; c++)
+    {
+      drawCell(c, r);
+    }
+  }
+}
+
+// Draw one sprite at its current position. Transparent pixels (pattern
+// bit 0) leave whatever was on screen beneath.
+static void spriteDraw(const sprites::Sprite& s)
+{
+  if (!s.active) return;
+  int body  = sprites::bodySize(s.magnify);
+  int scale = (s.magnify == sprites::MAG_2 ||
+               s.magnify == sprites::MAG_4) ? 2 : 1;
+  uint16_t fg = resolveColor(s.colorIdx);
+  // Top-left on physical display. TI pixel (row, col) → physical
+  // (DISPLAY_Y_OFFSET + (row-1)*2, DISPLAY_X_OFFSET + (col-1)*2).
+  int baseY = DISPLAY_Y_OFFSET + (s.row - 1) * 2;
+  int baseX = DISPLAY_X_OFFSET + (s.col - 1) * 2;
+  for (int sr = 0; sr < body; sr++)
+  {
+    for (int sc = 0; sc < body; sc++)
+    {
+      if (!sprites::pixelOn(s.charCode, s.magnify, sr, sc, charPatterns))
+      {
+        continue;
+      }
+      // Each source pixel becomes a 2x2 block (always), plus another
+      // 2x for magnify 2/4.
+      int reps = scale * 2;
+      for (int dy = 0; dy < reps; dy++)
+      {
+        for (int dx = 0; dx < reps; dx++)
+        {
+          int py = baseY + sr * reps + dy;
+          int px = baseX + sc * reps + dx;
+          if (py >= DISPLAY_Y_OFFSET &&
+              py < DISPLAY_Y_OFFSET + ROWS * CHAR_H &&
+              px >= DISPLAY_X_OFFSET &&
+              px < DISPLAY_X_OFFSET + COLS * CHAR_W)
+          {
+            tft->writePixel(px, py, fg);
+          }
+        }
+      }
+    }
+  }
+}
+
+static void spriteRedrawAll()
+{
+  for (int i = 1; i <= sprites::MAX_SPRITES; i++)
+  {
+    spriteDraw(sprites::g_sprites[i]);
+  }
+}
+
+// 60 Hz integration of sprite velocity. Each velocity unit is 1/8 of a
+// TI pixel per frame, so a 16 ms tick advances by vel/8. Sprites that
+// actually crossed a pixel boundary get erased (char grid restored)
+// and redrawn at their new position. Wraps at TI screen edges
+// (row in [1,192], col in [1,256]) — TI behavior.
+static void spriteTick()
+{
+  static unsigned long lastTick = 0;
+  unsigned long now = millis();
+  if (now - lastTick < 16) return;     // ~60 Hz gate
+  unsigned long elapsed = now - lastTick;
+  lastTick = now;
+  int frames = (int)(elapsed / 16);
+  if (frames < 1) frames = 1;
+  if (frames > 8) frames = 8;          // catch-up cap to avoid teleport
+
+  for (int i = 1; i <= sprites::MAX_SPRITES; i++)
+  {
+    sprites::Sprite& s = sprites::g_sprites[i];
+    if (!s.active) continue;
+    if (s.rowVel == 0 && s.colVel == 0) continue;
+
+    int16_t prevRow = s.row, prevCol = s.col;
+    s.subRow += (int32_t)s.rowVel * frames;
+    s.subCol += (int32_t)s.colVel * frames;
+
+    int16_t dr = (int16_t)(s.subRow / 8);
+    int16_t dc = (int16_t)(s.subCol / 8);
+    s.subRow -= (int32_t)dr * 8;
+    s.subCol -= (int32_t)dc * 8;
+
+    if (dr == 0 && dc == 0) continue;
+
+    int16_t nr = s.row + dr;
+    int16_t nc = s.col + dc;
+    // Wrap at TI screen edges (1..192 rows, 1..256 cols)
+    while (nr < 1)   nr += 192;
+    while (nr > 192) nr -= 192;
+    while (nc < 1)   nc += 256;
+    while (nc > 256) nc -= 256;
+
+    if (nr != prevRow || nc != prevCol)
+    {
+      spriteErase(s);
+      s.row = nr;
+      s.col = nc;
+      spriteDraw(s);
+    }
+  }
+}
+
 static void scrollUp()
 {
   memcpy(&screenBuf[0][0], &screenBuf[1][0], COLS * (ROWS - 1));
   memset(&screenBuf[ROWS - 1][0], 0x20, COLS);
   refreshScreen();
+  spriteRedrawAll();
   int y = (ROWS - 1) * CHAR_H + DISPLAY_Y_OFFSET;
   tft->fillRect(DISPLAY_X_OFFSET, y, COLS * CHAR_W, CHAR_H, bgColor);
 }
@@ -968,6 +1117,7 @@ static void gfxReset()
 {
   gfxResetColors();
   initCharPatterns();
+  sprites::clearAll();
   // Border repaints to default cyan along with the cells.
   paintBorder();
   redrawScreen();
@@ -1961,6 +2111,7 @@ static void cmdNew()
 {
   em.clearProgram();
   fio::closeAll();
+  sprites::clearAll();
   clearScreen();
   printLine("** READY **");
   showStatus("NEW program");
@@ -3160,7 +3311,19 @@ void setup()
   em.tp()->setCmdContinue(cmdContinue);
   em.tp()->setFileCallbacks(shimFileOpen, shimFileClose, shimFilePrint,
                             shimFileReadLine, shimFileEof);
+
+  em.tp()->setSpriteCallbacks(
+      /*draw=*/[](int n)  { if (sprites::validSlot(n)) spriteDraw (sprites::g_sprites[n]); },
+      /*erase=*/[](int n) { if (sprites::validSlot(n)) spriteErase(sprites::g_sprites[n]); });
+
+  // CALL SPEED routes here. Mirror to both EM (per-line throttle) and
+  // TP (per-statement throttle, fires on every `::` as well as line end).
+  em.tp()->setThrottleCallback([](unsigned long us) {
+    em.m_throttleUs = us;
+    em.tp()->setThrottleUs(us);
+  });
   em.setProgramEnded(gfxReset);
+  em.setPerLineTick(spriteTick);
   em.setPrepareInput(gfxPrepareInput);
   em.setPrintLine(printLine);
   em.setPrintError(printError);
@@ -3180,6 +3343,7 @@ void loop()
 {
   pasteDrainSerial();
   bleKbTask();
+  spriteTick();
   checkInput();
 
   if (inputReady)

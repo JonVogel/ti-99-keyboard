@@ -1123,3 +1123,146 @@ don't yet support, but the token stream should round-trip.)
 
 Phase 3 limits: PROGRAM only. INTERNAL and FIXED file types deferred.
 
+
+=== 38. Sprites — Phase 1: create / delete / locate / pattern / magnify ===
+
+--- Part 0: CALL SPEED throttle smoke test ---
+Verify that the per-statement throttle slows execution. Each PRINT is
+a separate statement, so 5 prints with `::` between each = 5 throttle
+delays per loop iteration.
+
+NEW
+10 CALL SPEED(0)
+20 PRINT "FAST 1" :: PRINT "FAST 2" :: PRINT "FAST 3"
+30 CALL SPEED(500000)
+40 PRINT "SLOW 1" :: PRINT "SLOW 2" :: PRINT "SLOW 3"
+50 CALL SPEED(0)
+RUN
+
+(Expected: the three FAST lines flash up almost instantly; the three
+SLOW lines space out at half a second each. After RUN finishes, type
+`CALL SPEED(0)` at the prompt to make sure speed comes back to normal
+for editing.)
+
+--- Part A: create a sprite ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 65, 2, 96, 128)
+30 GOTO 30
+RUN
+(Expected: letter A (char 65) in black appears near the middle of the
+screen and stays. Press ESC / CTRL-C / CLEAR to break out.)
+
+--- Part B: move with CALL LOCATE ---
+NEW
+5  CALL SPEED(300)
+10 CALL CLEAR
+20 CALL SPRITE(#1, 83, 7, 50, 50)
+30 FOR R=50 TO 150 STEP 10
+40 CALL LOCATE(#1, R, R)
+50 DISPLAY AT(1,1):"R=";R;"  "
+60 FOR I=1 TO 200 :: NEXT I
+70 NEXT R
+80 GOTO 80
+RUN
+(Expected: top-left shows "R=50", "R=60" ... "R=150" as the sprite
+slides diagonally. ESC to break. If R increments but the S stays
+put, CALL LOCATE has a bug.)
+
+--- Part C: CALL MAGNIFY ---
+NEW
+10 CALL CLEAR
+20 CALL MAGNIFY(4)
+30 CALL SPRITE(#1, 65, 2, 80, 120)
+40 FOR I=1 TO 50000 :: NEXT I
+RUN
+(Expected: a huge letter A rendered 4× size.)
+
+--- Part D: change pattern ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 65, 2, 96, 128)
+30 FOR C=65 TO 90
+40 CALL PATTERN(#1, C)
+50 FOR I=1 TO 8000 :: NEXT I
+60 NEXT C
+RUN
+(Expected: sprite cycles A through Z in place.)
+
+--- Part E: DELSPRITE ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 65, 2, 96, 128, #2, 66, 7, 96, 144, #3, 67, 9, 96, 160)
+30 FOR I=1 TO 30000 :: NEXT I
+40 CALL DELSPRITE(#2)
+50 FOR I=1 TO 30000 :: NEXT I
+60 CALL DELSPRITE(ALL)
+RUN
+(Expected: three letters appear, middle one vanishes, then all vanish.)
+
+Phase 1 limits: sprites render but don't auto-move. CALL MOTION is
+Phase 2 (velocity + timer update). CALL POSITION / COINC / DISTANCE
+are Phase 3.
+
+
+=== 39. Sprites Phase 2 — CALL MOTION + auto-update ===
+
+Sprites with non-zero velocity move on a 60 Hz timer. Effective
+pixel speed = velocity / 8 per frame, so velocity 8 = 1 px/frame
+= 60 px/s, velocity 64 = 8 px/frame ≈ fast-arcade-game speed.
+Negative values move up / left, positive down / right.
+
+--- Part A: simple horizontal scroll ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 65, 2, 96, 1)
+30 CALL MOTION(#1, 0, 16)
+40 GOTO 40
+RUN
+(Expected: letter A glides smoothly to the right, wraps when it
+reaches the edge. CTRL-C / ESC to break.)
+
+--- Part B: diagonal + wrap-around ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 79, 7, 1, 1)
+30 CALL MOTION(#1, 12, 20)
+40 GOTO 40
+RUN
+(Expected: letter O bounces diagonally — wraps off the bottom-right
+corner and reappears at the top-left.)
+
+--- Part C: stop motion ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 65, 2, 96, 1)
+30 CALL MOTION(#1, 0, 32)
+40 FOR I=1 TO 50000 :: NEXT I
+50 CALL MOTION(#1, 0, 0)
+60 GOTO 60
+RUN
+(Expected: sprite glides right, then stops mid-screen.)
+
+--- Part D: multiple moving sprites at once ---
+NEW
+10 CALL CLEAR
+20 FOR S=1 TO 5
+30 CALL SPRITE(#S, 64+S, S+1, 30+S*15, 1)
+40 CALL MOTION(#S, 0, S*4)
+50 NEXT S
+60 GOTO 60
+RUN
+(Expected: 5 sprites stagger across at different speeds.)
+
+--- Part E: motion + position update at runtime ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 65, 2, 96, 128)
+30 CALL MOTION(#1, 8, 0)
+40 FOR I=1 TO 50000 :: NEXT I
+50 CALL MOTION(#1, -8, 0)
+60 FOR I=1 TO 50000 :: NEXT I
+70 GOTO 30
+RUN
+(Expected: sprite oscillates up and down.)
+

@@ -39,6 +39,10 @@ public:
   void setGetLine(GetLineFn fn) { m_getLine = fn; }
   void setProgramEnded(ProgramEndedFn fn) { m_programEnded = fn; }
   void setPrepareInput(PrepareInputFn fn) { m_prepareInput = fn; }
+  // Optional per-iteration tick — called after every line so things
+  // like the sprite layer can integrate motion while RUN is busy.
+  typedef void (*PerLineTickFn)();
+  void setPerLineTick(PerLineTickFn fn) { m_perLineTick = fn; }
   TokenParser* tp() { return &m_tp; }
 
   // --- Tracing (TRACE / UNTRACE) ---
@@ -472,6 +476,20 @@ public:
         }
       }
 
+      if (m_perLineTick) m_perLineTick();
+      if (m_throttleUs > 0)
+      {
+        // Bigger throttles use delay() (yields to BLE / watchdog);
+        // smaller use delayMicroseconds() for finer-grained pacing.
+        if (m_throttleUs >= 1000)
+        {
+          delay(m_throttleUs / 1000);
+        }
+        else
+        {
+          delayMicroseconds(m_throttleUs);
+        }
+      }
       yield();  // Prevent watchdog timeout
     }
 
@@ -499,6 +517,16 @@ private:
   bool m_trace;
   int  m_breakpoints[MAX_BREAKPOINTS];
   int  m_breakpointCount;
+
+public:
+  // Per-line throttle (microseconds). 0 = unthrottled (default), our
+  // native ESP32 speed which is ~30x a real TI. Settable via
+  // CALL SPEED(n). Useful values:
+  //   285  ≈ TI Extended BASIC native speed
+  //   666  ≈ stock TI BASIC native speed
+  //   1000 = 1000 statements/sec — generic "slow"
+  unsigned long m_throttleUs = 0;
+private:
 
   // CONTINUE state. m_canContinue is set when STOP, breakpoint, or user
   // BREAK halts the program. m_continueNext tells run() to resume from
@@ -625,6 +653,7 @@ private:
   GetLineFn m_getLine;
   ProgramEndedFn m_programEnded = NULL;
   PrepareInputFn m_prepareInput = NULL;
+  PerLineTickFn  m_perLineTick  = NULL;
 
   // DATA reading state
   int m_dataLineIdx = 0;
@@ -729,31 +758,51 @@ private:
 
       case TP_NEXT_LOOP:
       {
-        // Find the FOR line and re-feed it to the TP
         int forIdx = findLineIndex(resp.lineNum);
-        if (forIdx < m_programSize &&
-            m_program[forIdx]->lineNum == resp.lineNum)
+        if (forIdx >= m_programSize ||
+            m_program[forIdx]->lineNum != resp.lineNum)
         {
-          ProgramLine* forLine = m_program[forIdx];
-          TPResponse loopResp = m_tp.processLine(
-            forLine->tokens, forLine->length,
-            forLine->lineNum, true);
-
-          if (loopResp.result == TP_END_LOOP)
-          {
-            // Find the NEXT line and continue after it
-            // The NEXT is at currentIdx, so continue from currentIdx + 1
-            return currentIdx + 1;
-          }
-          else
-          {
-            // Loop continues — go to the line after the FOR
-            return forIdx + 1;
-          }
+          if (m_printError) m_printError("* FOR-NEXT NESTING");
+          m_running = false;
+          return -1;
         }
-        if (m_printError) m_printError("* FOR-NEXT NESTING");
-        m_running = false;
-        return -1;
+        ProgramLine* forLine = m_program[forIdx];
+
+        // Single-line FOR/NEXT (FOR and NEXT on same line). Each
+        // re-feed runs ONE iteration; we keep re-feeding until the
+        // loop ends so the body runs the right number of times.
+        if (forIdx == currentIdx)
+        {
+          while (true)
+          {
+            TPResponse loopResp = m_tp.processLine(
+              forLine->tokens, forLine->length,
+              forLine->lineNum, true);
+            if (loopResp.result == TP_END_LOOP) break;
+            if (loopResp.result == TP_ERROR)
+            {
+              return handleResponse(loopResp, currentIdx);
+            }
+            // Same per-iteration housekeeping the outer loop does
+            if (m_perLineTick) m_perLineTick();
+            if (m_throttleUs > 0)
+            {
+              if (m_throttleUs >= 1000) delay(m_throttleUs / 1000);
+              else                      delayMicroseconds(m_throttleUs);
+            }
+            yield();
+          }
+          return currentIdx + 1;
+        }
+
+        // Multi-line FOR/NEXT: re-feed once (FOR's increment + check),
+        // and if continuing, jump to the body (forIdx + 1) and let the
+        // outer loop drive successive iterations.
+        TPResponse loopResp = m_tp.processLine(
+          forLine->tokens, forLine->length,
+          forLine->lineNum, true);
+        if (loopResp.result == TP_END_LOOP) return currentIdx + 1;
+        return forIdx + 1;
       }
 
       case TP_END_LOOP:
