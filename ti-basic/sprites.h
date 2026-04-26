@@ -70,11 +70,20 @@ namespace sprites
   // Return true if the sprite number is in range.
   inline bool validSlot(int n) { return n >= 1 && n <= MAX_SPRITES; }
 
-  // Returns the pixel-dimension of the sprite body in TI pixels
-  // (before magnify). With magnify, each source pixel becomes 2x2.
+  // Returns the source-pattern dimension in TI pixels (before scale):
+  // 8 for MAG_1 / MAG_2, 16 for MAG_3 / MAG_4.
   inline int bodySize(uint8_t magnify)
   {
     return (magnify == MAG_3 || magnify == MAG_4) ? 16 : 8;
+  }
+
+  // On-screen footprint in TI pixels (body × scale). Use this for
+  // COINC bounding-box checks, not bodySize().
+  inline int footprint(uint8_t magnify)
+  {
+    int body  = bodySize(magnify);
+    int scale = (magnify == MAG_2 || magnify == MAG_4) ? 2 : 1;
+    return body * scale;
   }
 
   // True if the pixel bit (1 or 0) at sprite-local row sr, col sc is on.

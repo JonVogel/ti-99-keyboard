@@ -970,6 +970,9 @@ static void spriteTick()
 {
   static unsigned long lastTick = 0;
   unsigned long now = millis();
+  // First call after boot: prime lastTick so we don't immediately
+  // integrate the entire millis() since power-on as a "catch-up".
+  if (lastTick == 0) { lastTick = now; return; }
   if (now - lastTick < 16) return;     // ~60 Hz gate
   unsigned long elapsed = now - lastTick;
   lastTick = now;
@@ -2319,9 +2322,28 @@ static void cmdSave(const char* filename)
     return;
   }
 
+  // FLASH.name / SDCARD.name / bare name → text .bas file.
+  fs::FS* targetFs = &LittleFS;
+  const char* devLabel = "FLASH";
+  const char* nameStart = filename;
+  if (strncasecmp(filename, "FLASH.", 6) == 0)
+  {
+    targetFs = &LittleFS;
+    devLabel = "FLASH";
+    nameStart = filename + 6;
+  }
+  else if (strncasecmp(filename, "SDCARD.", 7) == 0)
+  {
+    if (!fio::g_sdOk) { printError("* DEVICE NOT PRESENT"); return; }
+    targetFs = &SD;
+    devLabel = "SDCARD";
+    nameStart = filename + 7;
+  }
+  // else: bare name → defaults to FLASH for back-compat with old .bas files
+
   char path[48];
-  snprintf(path, sizeof(path), "/%s.bas", filename);
-  File f = LittleFS.open(path, "w");
+  snprintf(path, sizeof(path), "/%s.bas", nameStart);
+  File f = targetFs->open(path, "w");
   if (!f)
   {
     printError("* FILE ERROR");
@@ -2338,8 +2360,8 @@ static void cmdSave(const char* filename)
   }
   f.close();
 
-  char msg[48];
-  snprintf(msg, sizeof(msg), "SAVED: %s", path);
+  char msg[64];
+  snprintf(msg, sizeof(msg), "SAVED: %s%s", devLabel, path);
   printLine(msg);
 }
 
@@ -2384,9 +2406,27 @@ static void cmdOld(const char* filename)
     return;
   }
 
+  // FLASH.name / SDCARD.name / bare name → text .bas file.
+  fs::FS* sourceFs = &LittleFS;
+  const char* devLabel = "FLASH";
+  const char* nameStart = filename;
+  if (strncasecmp(filename, "FLASH.", 6) == 0)
+  {
+    sourceFs = &LittleFS;
+    devLabel = "FLASH";
+    nameStart = filename + 6;
+  }
+  else if (strncasecmp(filename, "SDCARD.", 7) == 0)
+  {
+    if (!fio::g_sdOk) { printError("* DEVICE NOT PRESENT"); return; }
+    sourceFs = &SD;
+    devLabel = "SDCARD";
+    nameStart = filename + 7;
+  }
+
   char path[48];
-  snprintf(path, sizeof(path), "/%s.bas", filename);
-  File f = LittleFS.open(path, "r");
+  snprintf(path, sizeof(path), "/%s.bas", nameStart);
+  File f = sourceFs->open(path, "r");
   if (!f)
   {
     printError("* FILE ERROR");
@@ -2405,8 +2445,8 @@ static void cmdOld(const char* filename)
   }
   f.close();
 
-  char msg[48];
-  snprintf(msg, sizeof(msg), "LOADED: %s", path);
+  char msg[64];
+  snprintf(msg, sizeof(msg), "LOADED: %s%s", devLabel, path);
   printLine(msg);
 }
 

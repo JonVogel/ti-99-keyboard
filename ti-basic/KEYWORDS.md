@@ -149,10 +149,10 @@ Status legend:
 |----------------|:----:|:----:|--------------------------------------------|
 | CALL SPRITE    |  ✅  |      | Phase 1: create, static draw                |
 | CALL MOTION    |  ✅  |      | Phase 2: 60 Hz integrator, vel/8 px per frame |
-| CALL POSITION  |      |      | Phase 3: read sprite position               |
+| CALL POSITION  |  ✅  |      | `CALL POSITION(#n,row,col)` — multi-sprite form  |
 | CALL LOCATE    |  ✅  |      | Phase 1: relocate sprite                    |
-| CALL COINC     |      |      | Phase 3: sprite coincidence check           |
-| CALL DISTANCE  |      |      | Phase 3: sprite-to-sprite distance          |
+| CALL COINC     |  ✅  |      | sprite-pair, sprite-point, ALL                |
+| CALL DISTANCE  |  ✅  |      | sprite-sprite or sprite-point; sum of dr²+dc²  |
 | CALL DELSPRITE |  ✅  |      | Phase 1: remove sprite(s) / ALL             |
 | CALL MAGNIFY   |  ✅  |      | Phase 1: 1..4 (8×8, 8×8×2, 16×16, 16×16×2)  |
 | CALL PATTERN   |  ✅  |      | Phase 1: change sprite character            |

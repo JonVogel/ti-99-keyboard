@@ -1930,9 +1930,11 @@ private:
         s.row      = (int16_t)m_expr.evalNumeric(tokens, pos);
         if (tokens[*pos] == TOK_COMMA) (*pos)++;
         s.col      = (int16_t)m_expr.evalNumeric(tokens, pos);
-        // Optional velocity args
+        // Optional velocity args. Only consume if a comma is followed
+        // by something other than `#` (which would start the next
+        // sprite in a multi-arg `CALL SPRITE(#1,...,#2,...)`).
         s.rowVel = 0; s.colVel = 0;
-        if (tokens[*pos] == TOK_COMMA)
+        if (tokens[*pos] == TOK_COMMA && tokens[*pos + 1] != TOK_HASH)
         {
           (*pos)++;
           s.rowVel = (int16_t)m_expr.evalNumeric(tokens, pos);
@@ -2029,6 +2031,205 @@ private:
         if (tokens[*pos] == TOK_COMMA) (*pos)++;
       }
       if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "POSITION") == 0)
+    {
+      // CALL POSITION(#n, row-var, col-var [, #n, row-var, col-var ...])
+      // Writes the sprite's current TI-pixel coordinates into the
+      // listed numeric variables.
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      while (tokens[*pos] != TOK_RPAREN && tokens[*pos] != TOK_EOL &&
+             tokens[*pos] != TOK_COLON && tokens[*pos] != TOK_BANG)
+      {
+        if (tokens[*pos] == TOK_HASH) (*pos)++;
+        int n = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        // row variable
+        char rname[MAX_VAR_NAME]; int rlen = 0; bool rIsStr;
+        if (isIdentStart(tokens[*pos]))
+        {
+          rlen = parseIdent(tokens, pos, rname, sizeof(rname), &rIsStr);
+        }
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        // col variable
+        char cname[MAX_VAR_NAME]; int clen = 0; bool cIsStr;
+        if (isIdentStart(tokens[*pos]))
+        {
+          clen = parseIdent(tokens, pos, cname, sizeof(cname), &cIsStr);
+        }
+        if (sprites::validSlot(n) && sprites::g_sprites[n].active)
+        {
+          if (rlen > 0)
+            m_vars.setNum(rname, rlen,
+                          (float)sprites::g_sprites[n].row);
+          if (clen > 0)
+            m_vars.setNum(cname, clen,
+                          (float)sprites::g_sprites[n].col);
+        }
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      return resp;
+    }
+
+    if (strcasecmp(subName, "DISTANCE") == 0)
+    {
+      // CALL DISTANCE(#s1, #s2, var)            — sprite-sprite
+      // CALL DISTANCE(#s, row, col, var)        — sprite-point
+      // Returns sum of squared row/col deltas (TI convention; no sqrt).
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      if (tokens[*pos] == TOK_HASH) (*pos)++;
+      int s1 = (int)m_expr.evalNumeric(tokens, pos);
+      if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      int r1 = 0, c1 = 0, valid1 = 0;
+      if (sprites::validSlot(s1) && sprites::g_sprites[s1].active)
+      {
+        r1 = sprites::g_sprites[s1].row;
+        c1 = sprites::g_sprites[s1].col;
+        valid1 = 1;
+      }
+      // Second arg may be #spriteN or a row literal
+      int r2 = 0, c2 = 0, valid2 = 0;
+      if (tokens[*pos] == TOK_HASH)
+      {
+        (*pos)++;
+        int s2 = (int)m_expr.evalNumeric(tokens, pos);
+        if (sprites::validSlot(s2) && sprites::g_sprites[s2].active)
+        {
+          r2 = sprites::g_sprites[s2].row;
+          c2 = sprites::g_sprites[s2].col;
+          valid2 = 1;
+        }
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      }
+      else
+      {
+        r2 = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        c2 = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        valid2 = 1;
+      }
+      // Result variable
+      char vname[MAX_VAR_NAME]; int vlen = 0; bool vIsStr;
+      if (isIdentStart(tokens[*pos]))
+      {
+        vlen = parseIdent(tokens, pos, vname, sizeof(vname), &vIsStr);
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+      if (valid1 && valid2 && vlen > 0)
+      {
+        long dr = r1 - r2, dc = c1 - c2;
+        m_vars.setNum(vname, vlen, (float)(dr * dr + dc * dc));
+      }
+      else if (vlen > 0)
+      {
+        // Sprite inactive — TI returns -1
+        m_vars.setNum(vname, vlen, -1.0f);
+      }
+      return resp;
+    }
+
+    if (strcasecmp(subName, "COINC") == 0)
+    {
+      // CALL COINC(#s1, #s2, tolerance, var)         — sprite pair
+      // CALL COINC(#s, row, col, tolerance, var)     — sprite-point
+      // CALL COINC(ALL, var)                         — any pair?
+      // Result: -1 if coincident within tolerance, 0 otherwise.
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+
+      if (tokens[*pos] == TOK_ALL)
+      {
+        (*pos)++;
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        char vname[MAX_VAR_NAME]; int vlen = 0; bool vIsStr;
+        if (isIdentStart(tokens[*pos]))
+        {
+          vlen = parseIdent(tokens, pos, vname, sizeof(vname), &vIsStr);
+        }
+        if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+        // Check every active pair for any overlap (8-px box per side
+        // of magnify-1 sprite, scale up for magnified).
+        int hit = 0;
+        for (int a = 1; a <= sprites::MAX_SPRITES && !hit; a++)
+        {
+          if (!sprites::g_sprites[a].active) continue;
+          for (int b = a + 1; b <= sprites::MAX_SPRITES && !hit; b++)
+          {
+            if (!sprites::g_sprites[b].active) continue;
+            int sa = sprites::footprint(sprites::g_sprites[a].magnify);
+            int sb = sprites::footprint(sprites::g_sprites[b].magnify);
+            int ra = sprites::g_sprites[a].row;
+            int ca = sprites::g_sprites[a].col;
+            int rb = sprites::g_sprites[b].row;
+            int cb = sprites::g_sprites[b].col;
+            if (ra < rb + sb && rb < ra + sa &&
+                ca < cb + sb && cb < ca + sa) hit = -1;
+          }
+        }
+        if (vlen > 0) m_vars.setNum(vname, vlen, (float)hit);
+        return resp;
+      }
+
+      if (tokens[*pos] == TOK_HASH) (*pos)++;
+      int s1 = (int)m_expr.evalNumeric(tokens, pos);
+      if (tokens[*pos] == TOK_COMMA) (*pos)++;
+
+      bool spritePair = (tokens[*pos] == TOK_HASH);
+      int s2 = 0, r2 = 0, c2 = 0;
+      if (spritePair)
+      {
+        (*pos)++;
+        s2 = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      }
+      else
+      {
+        r2 = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+        c2 = (int)m_expr.evalNumeric(tokens, pos);
+        if (tokens[*pos] == TOK_COMMA) (*pos)++;
+      }
+
+      int tolerance = (int)m_expr.evalNumeric(tokens, pos);
+      if (tokens[*pos] == TOK_COMMA) (*pos)++;
+
+      char vname[MAX_VAR_NAME]; int vlen = 0; bool vIsStr;
+      if (isIdentStart(tokens[*pos]))
+      {
+        vlen = parseIdent(tokens, pos, vname, sizeof(vname), &vIsStr);
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+
+      int result = 0;
+      if (sprites::validSlot(s1) && sprites::g_sprites[s1].active)
+      {
+        int r1 = sprites::g_sprites[s1].row;
+        int c1 = sprites::g_sprites[s1].col;
+        int rr, cc;
+        if (spritePair && sprites::validSlot(s2) &&
+            sprites::g_sprites[s2].active)
+        {
+          rr = sprites::g_sprites[s2].row;
+          cc = sprites::g_sprites[s2].col;
+        }
+        else if (!spritePair)
+        {
+          rr = r2; cc = c2;
+        }
+        else
+        {
+          if (vlen > 0) m_vars.setNum(vname, vlen, 0.0f);
+          return resp;
+        }
+        long dr = r1 - rr, dc = c1 - cc;
+        if (dr < 0) dr = -dr;
+        if (dc < 0) dc = -dc;
+        if (dr <= tolerance && dc <= tolerance) result = -1;
+      }
+      if (vlen > 0) m_vars.setNum(vname, vlen, (float)result);
       return resp;
     }
 

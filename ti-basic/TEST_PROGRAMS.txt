@@ -1163,20 +1163,39 @@ NEW
 50 DISPLAY AT(1,1):"R=";R;"  "
 60 FOR I=1 TO 200 :: NEXT I
 70 NEXT R
-80 GOTO 80
+REM 80 GOTO 80
 RUN
 (Expected: top-left shows "R=50", "R=60" ... "R=150" as the sprite
 slides diagonally. ESC to break. If R increments but the S stays
 put, CALL LOCATE has a bug.)
 
---- Part C: CALL MAGNIFY ---
+--- Part C1: CALL MAGNIFY 2 (single 8×8 char doubled) ---
+NEW
+10 CALL CLEAR
+20 CALL MAGNIFY(2)
+30 CALL SPRITE(#1, 65, 2, 80, 120)
+40 CALL KEY(0,K,S) :: IF S<1 THEN 40
+RUN
+(Expected: one large letter A, doubled to 16×16 TI-pixels. ESC.)
+
+--- Part C2: CALL MAGNIFY 3 (16×16 source = four 8×8 chars) ---
+NEW
+10 CALL CLEAR
+20 CALL MAGNIFY(3)
+30 CALL SPRITE(#1, 65, 2, 80, 120)
+40 CALL KEY(0,K,S) :: IF S<1 THEN 40
+RUN
+(Expected: a 2×2 grid of chars 65,66,67,68 = A,C / B,D in TI's
+column-major sprite-pattern layout, unmagnified.)
+
+--- Part C3: CALL MAGNIFY 4 (16×16 source doubled) ---
 NEW
 10 CALL CLEAR
 20 CALL MAGNIFY(4)
 30 CALL SPRITE(#1, 65, 2, 80, 120)
-40 FOR I=1 TO 50000 :: NEXT I
+40 CALL KEY(0,K,S) :: IF S<1 THEN 40
 RUN
-(Expected: a huge letter A rendered 4× size.)
+(Expected: same A,C / B,D grid as C2, but doubled to 32×32 TI-pixels.)
 
 --- Part D: change pattern ---
 NEW
@@ -1217,7 +1236,7 @@ NEW
 10 CALL CLEAR
 20 CALL SPRITE(#1, 65, 2, 96, 1)
 30 CALL MOTION(#1, 0, 16)
-40 GOTO 40
+40 CALL KEY(0,K,S) :: IF S<1 THEN 40
 RUN
 (Expected: letter A glides smoothly to the right, wraps when it
 reaches the edge. CTRL-C / ESC to break.)
@@ -1227,7 +1246,7 @@ NEW
 10 CALL CLEAR
 20 CALL SPRITE(#1, 79, 7, 1, 1)
 30 CALL MOTION(#1, 12, 20)
-40 GOTO 40
+40 CALL KEY(0,K,S) :: IF S<1 THEN 40
 RUN
 (Expected: letter O bounces diagonally — wraps off the bottom-right
 corner and reappears at the top-left.)
@@ -1239,9 +1258,9 @@ NEW
 30 CALL MOTION(#1, 0, 32)
 40 FOR I=1 TO 50000 :: NEXT I
 50 CALL MOTION(#1, 0, 0)
-60 GOTO 60
+60 CALL KEY(0,K,S) :: IF S<1 THEN 60
 RUN
-(Expected: sprite glides right, then stops mid-screen.)
+(Expected: sprite glides right, then stops mid-screen until key.)
 
 --- Part D: multiple moving sprites at once ---
 NEW
@@ -1250,11 +1269,108 @@ NEW
 30 CALL SPRITE(#S, 64+S, S+1, 30+S*15, 1)
 40 CALL MOTION(#S, 0, S*4)
 50 NEXT S
-60 GOTO 60
+60 CALL KEY(0,K,S) :: IF S<1 THEN 60
 RUN
 (Expected: 5 sprites stagger across at different speeds.)
 
---- Part E: motion + position update at runtime ---
+=== 40. Sprites Phase 3 — POSITION / DISTANCE / COINC ===
+
+--- Part A: read sprite position ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 65, 2, 96, 128)
+30 CALL POSITION(#1, R, C)
+40 PRINT "ROW=";R;" COL=";C
+50 END
+RUN
+(Expected: ROW= 96  COL= 128)
+
+--- Part B: bounce off screen edges ---
+The naïve `IF R>176 THEN RV=-RV` flips the sign every iteration while
+the sprite is past the bound, so it gets stuck. Direction-aware check:
+only flip when the velocity is INTO the wall.
+NEW
+10 CALL CLEAR
+20 RV=8 :: CV=12
+30 CALL SPRITE(#1, 65, 2, 96, 128, RV, CV)
+40 CALL POSITION(#1, R, C)
+50 IF (R<2 AND RV<0) OR (R>176 AND RV>0) THEN RV=-RV :: CALL MOTION(#1, RV, CV)
+60 IF (C<2 AND CV<0) OR (C>240 AND CV>0) THEN CV=-CV :: CALL MOTION(#1, RV, CV)
+70 CALL KEY(0,K,S) :: IF S<1 THEN 40
+RUN
+(Expected: A bounces around all four walls until you press a key.)
+
+--- Part C: COINC sprite-pair collision ---
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1, 65, 2, 96, 50)
+30 CALL SPRITE(#2, 79, 7, 96, 200, 0, -8)
+40 CALL COINC(#1, #2, 8, H)
+50 IF H=-1 THEN 80
+60 CALL KEY(0,K,S) :: IF S>0 THEN 90
+70 GOTO 40
+80 CALL DELSPRITE(ALL) :: PRINT "COLLISION!"
+90 END
+RUN
+(Expected: O glides left toward A, when they overlap "COLLISION!"
+prints and both sprites vanish.)
+
+--- Part D: COINC ALL sweep ---
+NEW
+10 CALL CLEAR
+20 FOR I=1 TO 4
+30 CALL SPRITE(#I, 64+I, I+1, 50+I*20, 50+I*30)
+40 NEXT I
+50 CALL COINC(ALL, H)
+60 PRINT "ANY COLLIDE:";H
+70 END
+RUN
+(Expected: ANY COLLIDE: 0 — no sprites overlap at those positions.)
+
+--- Part E: two sprites bouncing off walls and each other ---
+The full classic-arcade demo — wall-bounce + sprite-sprite collision.
+The collision logic flips both velocities; press any key to stop.
+NEW
+10 CALL CLEAR
+20 R1V=8 :: C1V=12 :: R2V=-6 :: C2V=-10
+30 CALL SPRITE(#1, 65, 2, 50, 50, R1V, C1V)
+40 CALL SPRITE(#2, 79, 7, 150, 200, R2V, C2V)
+50 CALL POSITION(#1, R1, C1) :: CALL POSITION(#2, R2, C2)
+60 IF (R1<2 AND R1V<0) OR (R1>176 AND R1V>0) THEN R1V=-R1V :: CALL MOTION(#1, R1V, C1V)
+70 IF (C1<2 AND C1V<0) OR (C1>240 AND C1V>0) THEN C1V=-C1V :: CALL MOTION(#1, R1V, C1V)
+80 IF (R2<2 AND R2V<0) OR (R2>176 AND R2V>0) THEN R2V=-R2V :: CALL MOTION(#2, R2V, C2V)
+90 IF (C2<2 AND C2V<0) OR (C2>240 AND C2V>0) THEN C2V=-C2V :: CALL MOTION(#2, R2V, C2V)
+100 CALL COINC(#1, #2, 12, H)
+110 IF H=-1 THEN R1V=-R1V :: C1V=-C1V :: R2V=-R2V :: C2V=-C2V :: CALL MOTION(#1, R1V, C1V) :: CALL MOTION(#2, R2V, C2V)
+120 CALL KEY(0,K,S) :: IF S<1 THEN 50
+RUN
+(Expected: A and O carom off all four walls and off each other until
+you press a key.)
+
+--- Part F: COINC ALL with mixed-size sprites ---
+Verify COINC ALL respects each sprite's actual on-screen footprint.
+Two sprites on the same row, 20 columns apart. With both unmagnified
+(8×8 footprint) they don't touch. After MAGNIFY 4 makes #2 a 32×32
+footprint, it reaches into #1's space and COINC fires.
+NEW
+10 CALL CLEAR
+20 CALL MAGNIFY(1)
+30 CALL SPRITE(#1, 65, 2, 96, 50)
+40 CALL SPRITE(#2, 79, 7, 96, 70)
+50 CALL COINC(ALL, H)
+60 PRINT "SMALL+SMALL:";H
+70 CALL DELSPRITE(#2)
+80 CALL MAGNIFY(4)
+90 CALL SPRITE(#2, 65, 7, 96, 30)
+100 CALL COINC(ALL, H)
+110 PRINT "SMALL+MAG4:";H
+120 END
+RUN
+(Expected: SMALL+SMALL: 0  — 50..57 vs 70..77 don't overlap.
+          SMALL+MAG4:  -1 — magnified #2 at col 30 covers 30..61,
+                            overlapping #1 at 50..57.)
+
+--- Part G: motion + position update at runtime ---
 NEW
 10 CALL CLEAR
 20 CALL SPRITE(#1, 65, 2, 96, 128)

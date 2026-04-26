@@ -22,8 +22,10 @@
 
 namespace fio
 {
-  // User units 1..4 + two reserved for internal COPY source/dest.
-  static const int MAX_FILES = 6;
+  // User units 1..10 + two reserved for internal COPY source/dest.
+  // (Real TI allowed 1..9 typically; we pick 10 to leave a little room
+  // and still keep BSS small. ~700 bytes per Slot × 13 ≈ 9 KB.)
+  static const int MAX_FILES = 12;
   static const int MAX_DSK   = 35;   // DSK1..DSK9, DSKA..DSKZ
 
   // Convert a TI drive character to a 1-based slot index.
