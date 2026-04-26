@@ -72,13 +72,12 @@ Status legend:
 | SUBEND         |  ✅  |  ✅  |                                              |
 | SUBEXIT        |  ✅  |  ✅  | Early return from subprogram                 |
 | OPEN           |  ✅  |  ✅  | `OPEN #n:"FLASH.NAME"`/`"SDCARD.NAME"`/`"DSKn.NAME"`; DIS/VAR + FIXED + RELATIVE; INTERNAL parsed (treated as DISPLAY) |
-| CLOSE          |  ✅  |      | `CLOSE #n [,#m ...]`                         |
+| CLOSE          |  ✅  |  ✅  | `CLOSE #n [,#m ...]`                         |
 | PRINT #        |  ✅  |  ✅  | One line per statement; `;` and `,` work; `,REC k` for relative access |
-| INPUT #        |  ✅  |      | Comma-split from one line; `,REC k` for relative access |
+| INPUT #        |  ✅  |  ✅  | Comma-split from one line; `,REC k` for relative access |
 | LINPUT #       |  ✅  |  ✅  | Whole line into first string var; `,REC k` for relative access |
-| EOF(n)         |  ✅  |      | -1 at end-of-file, 0 otherwise               |
-| RESTORE #      |      |      |                                              |
-| DELETE (file)  |      |      |                                              |
+| EOF(n)         |  ✅  |  ✅  | -1 at end-of-file, 0 otherwise               |
+| RESTORE #      |  ✅  |  ✅  | `RESTORE #n` — rewind file to first record without closing |
 | FIXED N        |  ✅  |  ✅  | `OPEN ...,FIXED 80` — N-byte records, no LF terminator |
 | RELATIVE       |  ✅  |  ✅  | `OPEN ...,RELATIVE` — pair with `REC k` on PRINT/INPUT |
 | INTERNAL       | (✅) |      | **Known limitation:** parsed but stored as DISPLAY (no radix-100). Not interoperable with real TI INTERNAL files. See EXTENSIONS.md. |
@@ -150,15 +149,15 @@ Status legend:
 
 | Subprogram     | Impl | Test | Notes                                      |
 |----------------|:----:|:----:|--------------------------------------------|
-| CALL SPRITE    |  ✅  |      | Phase 1: create, static draw                |
-| CALL MOTION    |  ✅  |      | Phase 2: 60 Hz integrator, vel/8 px per frame |
-| CALL POSITION  |  ✅  |      | `CALL POSITION(#n,row,col)` — multi-sprite form  |
-| CALL LOCATE    |  ✅  |      | Phase 1: relocate sprite                    |
-| CALL COINC     |  ✅  |      | sprite-pair, sprite-point, ALL                |
-| CALL DISTANCE  |  ✅  |      | sprite-sprite or sprite-point; sum of dr²+dc²  |
-| CALL DELSPRITE |  ✅  |      | Phase 1: remove sprite(s) / ALL             |
-| CALL MAGNIFY   |  ✅  |      | Phase 1: 1..4 (8×8, 8×8×2, 16×16, 16×16×2)  |
-| CALL PATTERN   |  ✅  |      | Phase 1: change sprite character            |
+| CALL SPRITE    |  ✅  |  ✅  | Phase 1: create, static draw                |
+| CALL MOTION    |  ✅  |  ✅  | Phase 2: 60 Hz integrator, vel/8 px per frame |
+| CALL POSITION  |  ✅  |  ✅  | `CALL POSITION(#n,row,col)` — multi-sprite form  |
+| CALL LOCATE    |  ✅  |  ✅  | Phase 1: relocate sprite                    |
+| CALL COINC     |  ✅  |  ✅  | sprite-pair, sprite-point, ALL — uses footprint (magnify-aware) |
+| CALL DISTANCE  |  ✅  |  ✅  | sprite-sprite or sprite-point; sum of dr²+dc²  |
+| CALL DELSPRITE |  ✅  |  ✅  | Phase 1: remove sprite(s) / ALL             |
+| CALL MAGNIFY   |  ✅  |  ✅  | Phase 1: 1..4 (8×8, 8×8×2, 16×16, 16×16×2)  |
+| CALL PATTERN   |  ✅  |  ✅  | Phase 1: change sprite character            |
 
 ## CALL subprograms — I/O & system
 
@@ -168,9 +167,9 @@ Status legend:
 | CALL VERSION   |  ✅  |  ✅  | Returns 110                                |
 | CALL JOYST     |      |      |                                            |
 | CALL SOUND     |  ✅  |      | Stub: parses + honors duration (wait vs. immediate); no audio yet |
-| CALL SPEED     |  ✅  |      | Our addition: `CALL SPEED(usPerLine)` — 0=fast (default), 285≈XB, 666≈TI BASIC |
-| CALL DELAY     |  ✅  |      | Our addition: `CALL DELAY(ms)` — block for ms milliseconds (animation pacing) |
-| CALL TIMER     |  ✅  |      | Our addition: `CALL TIMER(var)` — millis() since boot; subtract two readings to time code |
+| CALL SPEED     |  ✅  |  ✅  | Our addition: `CALL SPEED(usPerLine)` — 0=fast (default), 285≈XB, 666≈TI BASIC |
+| CALL DELAY     |  ✅  |  ✅  | Our addition: `CALL DELAY(ms)` — block for ms milliseconds (animation pacing) |
+| CALL TIMER     |  ✅  |  ✅  | Our addition: `CALL TIMER(var)` — millis() since boot; subtract two readings to time code |
 | CALL SAY       |      |      | Speech                                     |
 | CALL SPGET     |      |      | Speech                                     |
 | CALL ERR       |  ✅  |  ✅  | Stub: returns 0,0,0,lastErrLine (no classification yet) |
@@ -200,4 +199,4 @@ Status legend:
 | `tokenNames[256]` O(1) detokenize  |  ✅  |  ✅  | ASCII bytes + keyword tokens unified    |
 | 800×480 new-board port             |  ✅  |  ✅  | ESP32-8048S043C, 32×24 @ 16×16 chars    |
 | ~~ OTG version preserved ~~        |  ✅  |  ✅  | Frozen in `ti-basic-otg/`               |
-| V9T9 `.dsk` image support          |  ✅  |  ✅  | MOUNT/UNMOUNT/NEWDISK/COPY/OLD/SAVE; FLASH or SDCARD; DIS/VAR + PROGRAM; loads real TI archives |
+| V9T9 `.dsk` image support          |  ✅  |  ✅  | MOUNT/UNMOUNT/NEWDISK/COPY/OLD/SAVE; FLASH or SDCARD; DIS/VAR + DIS/FIX + PROGRAM; loads real TI archives |

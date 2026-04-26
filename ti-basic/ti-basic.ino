@@ -2764,6 +2764,10 @@ static bool shimFileSeekRec(int unit, long rec)
 {
   return fio::seekRecord(unit, rec);
 }
+static bool shimFileRewind(int unit)
+{
+  return fio::rewindFile(unit);
+}
 
 // TokenParser's CmdDirFn is void(), so register this wrapper for the
 // (currently unused) tokenized TOK_DIR path. Pre-tokenize dispatch in
@@ -3362,6 +3366,7 @@ void setup()
   em.tp()->setFileCallbacks(shimFileOpen, shimFileClose, shimFilePrint,
                             shimFileReadLine, shimFileEof);
   em.tp()->setFileSeekRec(shimFileSeekRec);
+  em.tp()->setFileRewind(shimFileRewind);
 
   em.tp()->setSpriteCallbacks(
       /*draw=*/[](int n)  { if (sprites::validSlot(n)) spriteDraw (sprites::g_sprites[n]); },

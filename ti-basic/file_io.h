@@ -367,6 +367,32 @@ namespace fio
     return s.fh.seek(offset);
   }
 
+  // RESTORE #n — rewind an open file to its first record without
+  // closing it. Resets eof, curRecord, and the DSK reader's logical
+  // position; for FLASH/SD-backed handles it byte-seeks to 0.
+  // Returns false on bad unit / closed unit / non-input mode.
+  inline bool rewindFile(int unit)
+  {
+    if (!unitValid(unit) || !g_slots[unit].inUse) return false;
+    Slot& s = g_slots[unit];
+    s.eof = false;
+    s.curRecord = 0;
+    if (s.device == DEV_DSK)
+    {
+      // Re-init the DIS/VAR reader from the original FileInfo. We
+      // didn't save the FileInfo on open, but the reader struct holds
+      // a copy in dskRdr.info — so we just reset its cursor fields.
+      s.dskRdr.curLogicalSector = 0;
+      s.dskRdr.posInSector = 0;
+      s.dskRdr.bufLoaded = false;
+      s.dskRdr.recordsRead = 0;
+      s.dskRdr.eof = (s.dskRdr.info.sectorCount == 0 ||
+                     s.dskRdr.info.numRecords == 0);
+      return true;
+    }
+    return s.fh.seek(0);
+  }
+
   inline int closeFile(int unit)
   {
     if (!unitValid(unit)) return 1;

@@ -1568,4 +1568,31 @@ RUN
 Expected: HELLO WORLD
 
 
+=== 43. RESTORE # — rewind a file without reopening ===
+
+NEW
+10 OPEN #1:"FLASH.RW1",OUTPUT
+20 PRINT #1:"ALPHA"
+30 PRINT #1:"BETA"
+40 PRINT #1:"GAMMA"
+50 CLOSE #1
+60 OPEN #1:"FLASH.RW1",INPUT
+70 LINPUT #1:A$
+80 LINPUT #1:B$
+90 PRINT "PASS 1: ";A$;" ";B$
+100 RESTORE #1
+110 LINPUT #1:C$
+120 LINPUT #1:D$
+130 PRINT "PASS 2: ";C$;" ";D$
+140 CLOSE #1
+150 END
+RUN
+
+Expected:
+PASS 1: ALPHA BETA
+PASS 2: ALPHA BETA
+
+(After RESTORE #1 the file is rewound to the first record, so the
+second pair of LINPUTs reads ALPHA / BETA again instead of GAMMA / EOF.)
+
 

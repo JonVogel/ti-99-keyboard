@@ -75,6 +75,8 @@ static const int FF_FIXED    = 0x02;
 static const int FF_RELATIVE = 0x04;
 // Per-unit RELATIVE record positioning (PRINT #N, REC=K).
 typedef bool (*FileSeekRecFn)(int unit, long rec);
+// RESTORE #N — rewind a file to the first record without closing it.
+typedef bool (*FileRewindFn)(int unit);
 typedef int (*FileCloseFn)(int unit);
 typedef int (*FilePrintFn)(int unit, const char* text);
 typedef int (*FileReadLineFn)(int unit, char* buf, int bufSize);
@@ -166,6 +168,7 @@ public:
     m_expr.setFileEof(e);
   }
   void setFileSeekRec(FileSeekRecFn f) { m_fileSeekRec = f; }
+  void setFileRewind(FileRewindFn f)   { m_fileRewind  = f; }
   void setDataCallbacks(NextDataFn nd, ResetDataFn rd)
   {
     m_nextData = nd;
@@ -392,6 +395,15 @@ public:
         case TOK_RESTORE:
         {
           pos++;
+          // RESTORE #n — rewind file unit n to its first record.
+          if (tokens[pos] == TOK_HASH)
+          {
+            pos++;
+            int unit = (int)m_expr.evalNumeric(tokens, &pos);
+            if (m_fileRewind) m_fileRewind(unit);
+            break;
+          }
+          // RESTORE [<line>] — reset DATA pointer.
           uint16_t lineNum = 0;
           if (tokens[pos] == TOK_LINENUM ||
               tokens[pos] == TOK_UNQUOTED_STR)
@@ -747,6 +759,7 @@ private:
   FileReadLineFn m_fileReadLine = NULL;
   FileEofFn      m_fileEof      = NULL;
   FileSeekRecFn  m_fileSeekRec  = NULL;
+  FileRewindFn   m_fileRewind   = NULL;
 
   SetCharFn m_setChar = NULL;
   GetCharFn m_getChar = NULL;
