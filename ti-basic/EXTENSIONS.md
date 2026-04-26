@@ -295,12 +295,31 @@ above.
 - **CALL LINK / CALL LOAD / CALL PEEK / CALL INIT** — assembly-language
   bridge to memory-expansion, not implemented (would require an
   emulated TMS9900 to be useful)
-- **PRINT USING / IMAGE** — formatted output statement, parser stub only
-- **OPEN modes**: only DISPLAY + SEQUENTIAL + INPUT/OUTPUT/APPEND.
-  INTERNAL, RELATIVE, FIXED, VARIABLE-record-size are parsed but
-  ignored.
 - **`CON` after `END`** — TI-faithful: CONTINUE works after STOP /
   breakpoint / user BREAK but is refused after END or NEW.
+
+## Known limitations
+
+These features are partially implemented — they parse and run, but
+behave differently from a real TI-99/4A in ways that matter for file
+interchange or absolute fidelity.
+
+- **INTERNAL files are stored as DISPLAY.** `OPEN ..., INTERNAL` is
+  accepted by the parser, but the I/O path writes plain ASCII text
+  the same way DISPLAY files do — there is no TI radix-100
+  floating-point encoding. Consequences:
+  - Round-trip *within ESP-XB* works fine: write INTERNAL on this
+    box, read it back on this box, you get the same data.
+  - **Files do not interop with a real TI-99 as INTERNAL.** A
+    DISPLAY-style ESP-XB file moved to a real TI must be opened as
+    DISPLAY there, and an INTERNAL file written by a real TI cannot
+    be read here.
+  - Numeric precision is whatever DISPLAY's print formatter produces
+    (~6-7 significant digits), not the full 13-digit radix-100
+    precision real INTERNAL would preserve.
+  - Adding real radix-100 encode/decode is on the future-work list
+    but isn't trivial — it's a few hundred lines of bit-twiddling
+    and BCD-style math.
 
 For the latest authoritative list of statuses, see
 [KEYWORDS.md](KEYWORDS.md).

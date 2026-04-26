@@ -1382,3 +1382,190 @@ NEW
 RUN
 (Expected: sprite oscillates up and down.)
 
+
+=== 41. PRINT USING / IMAGE — formatted output ===
+
+Edit characters in an IMAGE format string:
+  #         digit slot
+  .         decimal point
+  -         leading sign space (negative shows as `-`, positive as ` `)
+  +         leading sign always shown
+  ^^^^      scientific notation exponent (4 carets)
+Any other character is literal.
+
+--- Part A: simple right-justified numeric ---
+NEW
+10 IMAGE ###.##
+20 PRINT USING 10:12.345
+30 PRINT USING 10:-5.6
+40 PRINT USING 10:100
+50 END
+RUN
+
+Expected:
+ 12.35
+ -5.60
+100.00
+
+--- Part B: multiple values per line ---
+NEW
+10 IMAGE ###.## ###.##
+20 PRINT USING 10:1.5,2.75
+30 END
+RUN
+
+Expected:
+  1.50   2.75
+
+--- Part C: literal text in the IMAGE ---
+NEW
+10 IMAGE TOTAL = ###.##  COUNT = ###
+20 PRINT USING 10:99.5,42
+30 END
+RUN
+
+Expected:
+TOTAL =  99.50  COUNT =  42
+
+--- Part D: inline string format (no IMAGE line) ---
+NEW
+10 PRINT USING "##.## CM":3.14159
+20 PRINT USING "##.## CM":99.999
+30 END
+RUN
+
+Expected:
+ 3.14 CM
+##### CM       (overflow — 99.999 rounds to 100.00, doesn't fit in
+                ##.## so every slot in the field shows '#')
+
+--- Part E: overflow detection ---
+NEW
+10 IMAGE ##.##
+20 PRINT USING 10:1.234
+30 PRINT USING 10:9999.99
+40 END
+RUN
+
+Expected:
+ 1.23
+#####          (1.234 fits, 9999.99 doesn't — '#'s flag overflow)
+
+--- Part F: DISPLAY AT ... USING ---
+NEW
+10 CALL CLEAR
+20 IMAGE  SCORE: ####
+30 DISPLAY AT(5,5) USING 20:1234
+40 CALL KEY(0,K,S):: IF S<1 THEN 40
+RUN
+
+Expected: at row 5 col 5, "SCORE: 1234".
+
+
+=== 42. Open modes — FIXED and RELATIVE ===
+
+OPEN supports three additional keywords beyond the default DISPLAY/SEQUENTIAL:
+
+  INTERNAL  — accepted; treated as DISPLAY (no TI radix-100 encoding)
+  FIXED N   — fixed N-byte records, no length prefix or LF terminator
+  RELATIVE  — random access; pair with REC=K on PRINT/INPUT
+
+REC=K may be used on any FIXED file (it implies relative positioning
+even if the file was opened SEQUENTIAL).
+
+--- Part A: FIXED on FLASH (sequential write + read) ---
+NEW
+10 OPEN #1:"FLASH.FIX1",OUTPUT,FIXED 10
+20 PRINT #1:"AAAA"
+30 PRINT #1:"BBBB"
+40 PRINT #1:"CCCC"
+50 CLOSE #1
+60 OPEN #1:"FLASH.FIX1",INPUT,FIXED 10
+70 LINPUT #1:A$
+80 LINPUT #1:B$
+90 LINPUT #1:C$
+100 CLOSE #1
+110 PRINT "[";A$;"]"
+120 PRINT "[";B$;"]"
+130 PRINT "[";C$;"]"
+140 END
+RUN
+
+Expected:
+[AAAA]
+[BBBB]
+[CCCC]
+(Trailing space-pad is stripped on read.)
+
+--- Part B: RELATIVE — write out of order ---
+NEW
+10 OPEN #1:"FLASH.REL1",OUTPUT,FIXED 8,RELATIVE
+20 PRINT #1,REC 2:"REC TWO"
+30 PRINT #1,REC 0:"REC ZERO"
+40 PRINT #1,REC 1:"REC ONE"
+50 CLOSE #1
+60 OPEN #1:"FLASH.REL1",INPUT,FIXED 8,RELATIVE
+70 LINPUT #1,REC 1:R1$
+80 LINPUT #1,REC 0:R0$
+90 LINPUT #1,REC 2:R2$
+100 CLOSE #1
+110 PRINT "0=";R0$
+120 PRINT "1=";R1$
+130 PRINT "2=";R2$
+140 END
+RUN
+
+Expected:
+0=REC ZERO
+1=REC ONE
+2=REC TWO
+
+--- Part C: FIXED on a DSK image ---
+First mount a writable disk on SD (FLASH works too but tears the
+display during the format pass — see EXTENSIONS.md). If DSK1 is
+already mounted from an earlier test, unmount it first; and include
+the `.DSK` extension explicitly on the MOUNT spec:
+UNMOUNT DSK1
+NEWDISK SDCARD.WORK.DSK,SSSD
+MOUNT DSK1,SDCARD.WORK.DSK
+
+NEW
+10 OPEN #1:"DSK1.FX",OUTPUT,FIXED 16
+20 FOR I=1 TO 5
+30 PRINT #1:"REC " & STR$(I)
+40 NEXT I
+50 CLOSE #1
+60 OPEN #1:"DSK1.FX",INPUT,FIXED 16
+70 FOR I=1 TO 5
+80 LINPUT #1:R$
+90 PRINT R$
+100 NEXT I
+110 CLOSE #1
+120 END
+RUN
+
+Expected: REC 1 .. REC 5 each on its own line. CAT DSK1 should show
+FX with a 16-byte record length.
+
+--- Part D: INTERNAL is parse-and-go (KNOWN LIMITATION) ---
+INTERNAL is recognized in OPEN so existing TI code doesn't error out,
+but the bytes go to disk as DISPLAY for now (no radix-100 encoding).
+A round-trip works with itself but files are NOT interoperable with
+a real TI-99's INTERNAL format. See EXTENSIONS.md "Known limitations".
+NEW
+10 OPEN #1:"FLASH.INT1",OUTPUT,INTERNAL
+20 PRINT #1:"HELLO"
+30 PRINT #1:"WORLD"
+40 CLOSE #1
+50 OPEN #1:"FLASH.INT1",INPUT,INTERNAL
+60 LINPUT #1:A$
+70 LINPUT #1:B$
+80 CLOSE #1
+90 PRINT A$;" ";B$
+100 END
+RUN
+
+Expected: HELLO WORLD
+
+
+

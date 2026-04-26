@@ -60,9 +60,21 @@ typedef void (*SpriteEraseFn)(int slot);
 // CALL SPEED(usPerLine) — sets execution-throttle in EM.
 typedef void (*SetThrottleFn)(unsigned long us);
 
+// PRINT USING <lineN>: looks up an IMAGE statement by line number.
+// Out: pointer + length to the format string. Returns true on hit.
+typedef bool (*ImageLookupFn)(uint16_t lineNum, const char** outStr,
+                              int* outLen);
+
 // File I/O callbacks — thin shims over file_io.h. Return 0 on success,
 // non-zero on error; errorMsgOut optional (may be NULL).
-typedef int (*FileOpenFn)(int unit, const char* spec, int mode);
+typedef int (*FileOpenFn)(int unit, const char* spec, int mode,
+                          int flags, int recLen);
+// File flag bits — must mirror fio::OF_* in file_io.h.
+static const int FF_INTERNAL = 0x01;
+static const int FF_FIXED    = 0x02;
+static const int FF_RELATIVE = 0x04;
+// Per-unit RELATIVE record positioning (PRINT #N, REC=K).
+typedef bool (*FileSeekRecFn)(int unit, long rec);
 typedef int (*FileCloseFn)(int unit);
 typedef int (*FilePrintFn)(int unit, const char* text);
 typedef int (*FileReadLineFn)(int unit, char* buf, int bufSize);
@@ -141,6 +153,7 @@ public:
   }
 
   void setThrottleCallback(SetThrottleFn f) { m_setThrottle = f; }
+  void setImageLookup(ImageLookupFn f) { m_imageLookup = f; }
 
   void setFileCallbacks(FileOpenFn o, FileCloseFn c, FilePrintFn p,
                         FileReadLineFn r, FileEofFn e)
@@ -152,6 +165,7 @@ public:
     m_fileEof = e;
     m_expr.setFileEof(e);
   }
+  void setFileSeekRec(FileSeekRecFn f) { m_fileSeekRec = f; }
   void setDataCallbacks(NextDataFn nd, ResetDataFn rd)
   {
     m_nextData = nd;
@@ -596,7 +610,10 @@ public:
 
         case TOK_BANG:
         case TOK_REM:
-          // Skip rest of line
+        case TOK_IMAGE:
+          // Skip rest of line. IMAGE stores a format string for
+          // PRINT USING <lineNum>: ... — the format is read by walking
+          // the program for the matching line, not by executing here.
           return resp;  // NEXT_LINE
 
         case TOK_END:
@@ -620,8 +637,22 @@ public:
           break;
 
         default:
-          // Unknown token — skip
-          pos++;
+          // Unknown token — skip past it. String/number literals carry
+          // a length byte + N content bytes; a bare `pos++` would walk
+          // those bytes back into the dispatcher and re-interpret them
+          // as opcodes (e.g. a 7-char string body's length byte = 0x07
+          // = TOK_SAVE → spurious SAVE invocation).
+          if (tok == TOK_QUOTED_STR || tok == TOK_UNQUOTED_STR ||
+              tok == TOK_STRING_LIT)
+          {
+            pos++;                    // past the type tag
+            int slen = tokens[pos++]; // past the length byte
+            pos += slen;              // past the content
+          }
+          else
+          {
+            pos++;
+          }
           break;
       }
     }
@@ -708,12 +739,14 @@ private:
   SpriteDrawFn  m_spriteDraw  = NULL;
   SpriteEraseFn m_spriteErase = NULL;
   SetThrottleFn m_setThrottle = NULL;
+  ImageLookupFn m_imageLookup = NULL;
 
   FileOpenFn     m_fileOpen     = NULL;
   FileCloseFn    m_fileClose    = NULL;
   FilePrintFn    m_filePrint    = NULL;
   FileReadLineFn m_fileReadLine = NULL;
   FileEofFn      m_fileEof      = NULL;
+  FileSeekRecFn  m_fileSeekRec  = NULL;
 
   SetCharFn m_setChar = NULL;
   GetCharFn m_getChar = NULL;
@@ -760,6 +793,141 @@ private:
     // Ends with $ → string variable or string function
     if (nameLen > 0 && name[nameLen - 1] == '$') return true;
     return false;
+  }
+
+  // --- PRINT USING / IMAGE format engine ---
+  //
+  // Walks an IMAGE format string, substituting numeric edit fields
+  // ('#' digit slots, optional '.' decimal point, optional leading
+  // '-' sign space, '^^^^' scientific notation) with values from
+  // the supplied list. Anything else in the IMAGE passes through
+  // literally.
+  //
+  // Returns number of bytes written to `out`.
+  int formatUsing(const char* image, int imageLen,
+                  const uint8_t* tokens, int* pos,
+                  char* out, int outSize)
+  {
+    int op = 0;
+    int ip = 0;
+    while (ip < imageLen)
+    {
+      char ch = image[ip];
+
+      // Detect an edit field — a run of '#', '.', '-', '+', '^'
+      if (ch == '#' || ch == '.' || ch == '-' ||
+          ch == '+' || ch == '^')
+      {
+        int fieldStart = ip;
+        while (ip < imageLen)
+        {
+          char fc = image[ip];
+          if (fc != '#' && fc != '.' && fc != '-' &&
+              fc != '+' && fc != '^') break;
+          ip++;
+        }
+        const char* field = &image[fieldStart];
+        int fieldLen = ip - fieldStart;
+
+        // Read next value from token stream
+        if (tokens[*pos] == TOK_COMMA || tokens[*pos] == TOK_SEMICOLON)
+        {
+          (*pos)++;
+        }
+        float val = m_expr.evalNumeric(tokens, pos);
+
+        // Count digit slots
+        int intSlots = 0, fracSlots = 0;
+        bool sawDot = false;
+        bool hasSign = false;
+        bool hasExp  = false;
+        int  expCarets = 0;
+        for (int i = 0; i < fieldLen; i++)
+        {
+          char fc = field[i];
+          if (fc == '#')      { if (sawDot) fracSlots++; else intSlots++; }
+          else if (fc == '.') { sawDot = true; }
+          else if (fc == '-' || fc == '+') { hasSign = true; }
+          else if (fc == '^') { hasExp = true; expCarets++; }
+        }
+        if (!hasExp) expCarets = 0;
+
+        // Format the value
+        bool negative = (val < 0);
+        float absVal = negative ? -val : val;
+        char numbuf[32];
+
+        if (hasExp && expCarets >= 2)
+        {
+          // Scientific notation: e.g. "##.##^^^^" → 1.23E+04
+          int decimals = fracSlots;
+          int sigDigits = intSlots + fracSlots;
+          if (sigDigits < 1) sigDigits = 1;
+          // Use printf %e style, then trim mantissa digits
+          char tmp[32];
+          snprintf(tmp, sizeof(tmp), "%.*e", decimals, absVal);
+          snprintf(numbuf, sizeof(numbuf), "%s%s",
+                   negative ? "-" : (hasSign ? " " : ""), tmp);
+        }
+        else
+        {
+          // Fixed-point
+          char tmp[32];
+          if (sawDot)
+          {
+            snprintf(tmp, sizeof(tmp), "%.*f", fracSlots, absVal);
+          }
+          else
+          {
+            snprintf(tmp, sizeof(tmp), "%.0f", absVal);
+          }
+          int tmpLen = strlen(tmp);
+          int needed = tmpLen + (negative ? 1 : (hasSign ? 1 : 0));
+          int width  = intSlots + (sawDot ? 1 : 0) + fracSlots;
+
+          // Find length of integer part of tmp (before any '.')
+          int tmpIntLen = 0;
+          for (int i = 0; i < tmpLen; i++)
+          {
+            if (tmp[i] == '.') break;
+            tmpIntLen++;
+          }
+          int intNeeded = tmpIntLen + (negative || hasSign ? 1 : 0);
+
+          if (intNeeded > intSlots)
+          {
+            // Overflow — TI prints '#'s in every slot
+            for (int i = 0; i < width; i++) numbuf[i] = '#';
+            numbuf[width] = '\0';
+          }
+          else
+          {
+            int p = 0;
+            int padCount = intSlots - intNeeded;
+            for (int i = 0; i < padCount; i++) numbuf[p++] = ' ';
+            if (negative)        numbuf[p++] = '-';
+            else if (hasSign)    numbuf[p++] = ' ';
+            memcpy(&numbuf[p], tmp, tmpLen);
+            p += tmpLen;
+            numbuf[p] = '\0';
+          }
+        }
+
+        int nbLen = strlen(numbuf);
+        for (int i = 0; i < nbLen && op < outSize - 1; i++)
+        {
+          out[op++] = numbuf[i];
+        }
+      }
+      else
+      {
+        // Literal character
+        if (op < outSize - 1) out[op++] = ch;
+        ip++;
+      }
+    }
+    out[op] = '\0';
+    return op;
   }
 
   // --- Statement handlers ---
@@ -831,14 +999,75 @@ private:
 
   void execPrint(const uint8_t* tokens, int* pos, bool addNewline = true)
   {
-    // PRINT #n : ... — file output. Build one line's worth of text into
-    // a buffer and hand it to the file I/O layer.
+    // PRINT #n [, REC k] : ... — file output. Build one line's worth of
+    // text into a buffer and hand it to the file I/O layer.
     if (tokens[*pos] == TOK_HASH)
     {
       (*pos)++;
       int unit = (int)m_expr.evalNumeric(tokens, pos);
+      if (tokens[*pos] == TOK_COMMA && tokens[*pos + 1] == TOK_REC)
+      {
+        (*pos)++;   // comma
+        (*pos)++;   // REC
+        if (tokens[*pos] == TOK_EQUAL) (*pos)++;
+        long rec = (long)m_expr.evalNumeric(tokens, pos);
+        if (m_fileSeekRec) m_fileSeekRec(unit, rec);
+      }
       if (tokens[*pos] == TOK_COLON) (*pos)++;
       execPrintFile(tokens, pos, unit);
+      return;
+    }
+
+    // PRINT USING <imageRef>: list...   — TI-style formatted output.
+    // imageRef is either a line-number-pointing-at-IMAGE or a string
+    // literal/expression containing the format directly.
+    if (tokens[*pos] == TOK_USING)
+    {
+      (*pos)++;
+      char imageBuf[160];
+      int  imageLen = 0;
+      // Variant 1: line number reference
+      if (tokens[*pos] == TOK_LINENUM ||
+          tokens[*pos] == TOK_UNQUOTED_STR)
+      {
+        uint16_t ln = readLineNum(tokens, pos);
+        if (m_imageLookup)
+        {
+          const char* p; int n;
+          if (m_imageLookup(ln, &p, &n))
+          {
+            int copy = (n < (int)sizeof(imageBuf) - 1) ? n :
+                       (int)sizeof(imageBuf) - 1;
+            memcpy(imageBuf, p, copy);
+            imageLen = copy;
+          }
+        }
+      }
+      else
+      {
+        // Variant 2: string expression
+        m_expr.evalString(tokens, pos, imageBuf, sizeof(imageBuf));
+        imageLen = strlen(imageBuf);
+      }
+      // Consume separator before the value list
+      if (tokens[*pos] == TOK_COLON || tokens[*pos] == TOK_SEMICOLON)
+      {
+        (*pos)++;
+      }
+      // Trim leading whitespace from imageBuf since IMAGE captures the
+      // literal source text after the keyword (which usually has a
+      // single leading space).
+      int trim = 0;
+      while (trim < imageLen && imageBuf[trim] == ' ') trim++;
+
+      char outBuf[200];
+      int outLen = formatUsing(&imageBuf[trim], imageLen - trim,
+                               tokens, pos, outBuf, sizeof(outBuf));
+      if (m_printString) m_printString(outBuf);
+      m_printCol += outLen;
+      // PRINT USING ends with newline unless caller suppresses
+      if (addNewline && m_printChar) m_printChar('\n');
+      m_printCol = 0;
       return;
     }
 
@@ -1382,6 +1611,8 @@ private:
     m_expr.evalString(tokens, pos, spec, sizeof(spec));
 
     int mode = 0;   // TI default = INPUT
+    int flags = 0;
+    int recLen = 0;
     while (tokens[*pos] == TOK_COMMA)
     {
       (*pos)++;
@@ -1390,17 +1621,37 @@ private:
       else if (k == TOK_OUTPUT)  { mode = 1; (*pos)++; }
       else if (k == TOK_APPEND)  { mode = 2; (*pos)++; }
       else if (k == TOK_UPDATE)  { mode = 3; (*pos)++; }
-      else if (k == TOK_SEQUENTIAL || k == TOK_RELATIVE ||
-               k == TOK_INTERNAL || k == TOK_FIXED ||
-               k == TOK_PERMANENT || k == TOK_DISPLAY ||
-               k == TOK_VARIABLE_KW)
+      else if (k == TOK_INTERNAL) { flags |= FF_INTERNAL; (*pos)++; }
+      else if (k == TOK_RELATIVE) { flags |= FF_RELATIVE; (*pos)++;
+                                    // Optional max-record-count (ignored)
+                                    if (tokens[*pos] == TOK_UNQUOTED_STR)
+                                    {
+                                      readNumber(tokens, pos);
+                                    }
+                                  }
+      else if (k == TOK_FIXED)
+      {
+        flags |= FF_FIXED;
+        (*pos)++;
+        // FIXED is normally followed by a record length (default 80)
+        if (tokens[*pos] == TOK_UNQUOTED_STR)
+        {
+          recLen = (int)readNumber(tokens, pos);
+        }
+        else
+        {
+          recLen = 80;
+        }
+      }
+      else if (k == TOK_VARIABLE_KW)
       {
         (*pos)++;
-        // VARIABLE <n> — consume the size too
-        if (k == TOK_VARIABLE_KW && tokens[*pos] == TOK_UNQUOTED_STR)
-        {
-          readNumber(tokens, pos);
-        }
+        if (tokens[*pos] == TOK_UNQUOTED_STR) readNumber(tokens, pos);
+      }
+      else if (k == TOK_SEQUENTIAL || k == TOK_PERMANENT ||
+               k == TOK_DISPLAY)
+      {
+        (*pos)++;
       }
       else
       {
@@ -1408,13 +1659,16 @@ private:
       }
     }
 
+    // FIXED implies a default record length if user omitted one.
+    if ((flags & FF_FIXED) && recLen == 0) recLen = 80;
+
     if (!m_fileOpen)
     {
       resp.result = TP_ERROR;
       snprintf(resp.errorMsg, sizeof(resp.errorMsg), "I/O ERROR");
       return resp;
     }
-    int err = m_fileOpen(unit, spec, mode);
+    int err = m_fileOpen(unit, spec, mode, flags, recLen);
     if (err != 0)
     {
       resp.result = TP_ERROR;
@@ -2626,11 +2880,19 @@ private:
     resp.errorMsg[0] = '\0';
     resp.prompt[0] = '\0';
 
-    // INPUT #n / LINPUT #n — read from a file unit instead of user.
+    // INPUT #n [, REC k] / LINPUT #n — read from a file unit instead of user.
     if (tokens[*pos] == TOK_HASH)
     {
       (*pos)++;
       int unit = (int)m_expr.evalNumeric(tokens, pos);
+      if (tokens[*pos] == TOK_COMMA && tokens[*pos + 1] == TOK_REC)
+      {
+        (*pos)++;   // comma
+        (*pos)++;   // REC
+        if (tokens[*pos] == TOK_EQUAL) (*pos)++;
+        long rec = (long)m_expr.evalNumeric(tokens, pos);
+        if (m_fileSeekRec) m_fileSeekRec(unit, rec);
+      }
       if (tokens[*pos] == TOK_COLON) (*pos)++;
       execInputFile(tokens, pos, unit);
       m_linputMode = false;   // reset flag even on file path

@@ -651,6 +651,192 @@ namespace dsk
       return true;
     }
 
+    // Begin writing a new DIS/FIXED file. Same as openDisVarWriter but
+    // the sector buffer is zero-padded (FIXED files don't use 0xFF
+    // record padding).
+    bool openFixedWriter(const char* name, DisVarWriter& w)
+    {
+      if (!openDisVarWriter(name, w)) return false;
+      memset(w.buf, 0, SECTOR_SIZE);
+      return true;
+    }
+
+    // Close a DIS/FIXED writer. Writes a FIXED-style FDR (no VARIABLE
+    // bit, recLen filled in, recordsPerSector filled in).
+    bool closeFixedWriter(DisVarWriter& w, int recLen)
+    {
+      if (!w.img) return false;
+      if (recLen <= 0) return false;
+
+      if (!writeSector(w.sectors[w.curLogicalSector], w.buf)) return false;
+
+      uint8_t fdr[SECTOR_SIZE];
+      memset(fdr, 0, SECTOR_SIZE);
+      memcpy(fdr, w.name, 10);
+      fdr[0x0C] = 0x00;   // DISPLAY / FIXED
+      fdr[0x0D] = (uint8_t)(SECTOR_SIZE / recLen);   // recs per sector
+      fdr[0x0E] = (w.sectorCount >> 8) & 0xFF;
+      fdr[0x0F] = w.sectorCount & 0xFF;
+      fdr[0x10] = (uint8_t)(w.posInSector & 0xFF);
+      fdr[0x11] = (uint8_t)recLen;
+      fdr[0x12] = w.numRecords & 0xFF;
+      fdr[0x13] = (w.numRecords >> 8) & 0xFF;
+
+      int off = 0x1C;
+      uint16_t i = 0;
+      while (i < w.sectorCount && off + 3 <= SECTOR_SIZE)
+      {
+        uint16_t startSec = w.sectors[i];
+        uint16_t runLen = 1;
+        while (i + runLen < w.sectorCount &&
+               w.sectors[i + runLen] == startSec + runLen) runLen++;
+        uint16_t endOff = i + runLen - 1;
+        fdr[off]     = startSec & 0xFF;
+        fdr[off + 1] = ((endOff & 0x0F) << 4) | ((startSec >> 8) & 0x0F);
+        fdr[off + 2] = (endOff >> 4) & 0xFF;
+        off += 3;
+        i += runLen;
+      }
+      if (!writeSector(w.fdrSec, fdr)) return false;
+      w.img = nullptr;
+      return true;
+    }
+
+    // Write one FIXED-length record. recLen is the file's record length;
+    // data is space-padded or truncated to that size. If curRecord is
+    // non-null we treat this as RELATIVE access and seek to that record
+    // (within the writer's already-allocated sectors); otherwise we
+    // append at the writer's current position.
+    //
+    // Records do not span sectors. Each sector holds floor(256/recLen)
+    // records; remaining bytes in the sector are 0x00 padding.
+    bool writeFixedRecord(DisVarWriter& w, const char* data, int recLen,
+                          long* curRecord)
+    {
+      if (recLen <= 0 || recLen > 255) return false;
+      int recsPerSector = SECTOR_SIZE / recLen;
+      if (recsPerSector < 1) return false;
+
+      long targetRec = -1;
+      if (curRecord)
+      {
+        targetRec = *curRecord;
+        (*curRecord)++;
+      }
+
+      if (targetRec >= 0)
+      {
+        int targetSector = (int)(targetRec / recsPerSector);
+        int slotInSector = (int)(targetRec % recsPerSector);
+        // Allocate any new sectors needed to reach targetSector
+        while (w.sectorCount <= targetSector)
+        {
+          // Persist current buffer first
+          if (!writeSector(w.sectors[w.curLogicalSector], w.buf)) return false;
+          uint8_t vib[SECTOR_SIZE];
+          if (!loadVib(vib)) return false;
+          uint16_t nextSec = findFreeSector(vib);
+          if (nextSec == 0) return false;
+          setAlloc(vib, nextSec, true);
+          if (!writeSector(0, vib)) return false;
+          if (w.sectorCount >= 128) return false;
+          w.sectors[w.sectorCount++] = nextSec;
+          w.curLogicalSector++;
+          memset(w.buf, 0, SECTOR_SIZE);
+        }
+        // Switch the working buffer to the target sector if needed.
+        if (w.curLogicalSector != targetSector)
+        {
+          if (!writeSector(w.sectors[w.curLogicalSector], w.buf)) return false;
+          if (!readSector(w.sectors[targetSector], w.buf)) return false;
+          w.curLogicalSector = targetSector;
+        }
+        int off = slotInSector * recLen;
+        int n = (int)strlen(data);
+        if (n > recLen) n = recLen;
+        memcpy(&w.buf[off], data, n);
+        for (int i = n; i < recLen; i++) w.buf[off + i] = ' ';
+        if (targetRec + 1 > w.numRecords) w.numRecords = targetRec + 1;
+        w.posInSector = (slotInSector + 1) * recLen;
+        return true;
+      }
+
+      // Sequential append
+      if (w.posInSector + recLen > recsPerSector * recLen)
+      {
+        if (!writeSector(w.sectors[w.curLogicalSector], w.buf)) return false;
+        uint8_t vib[SECTOR_SIZE];
+        if (!loadVib(vib)) return false;
+        uint16_t nextSec = findFreeSector(vib);
+        if (nextSec == 0) return false;
+        setAlloc(vib, nextSec, true);
+        if (!writeSector(0, vib)) return false;
+        if (w.sectorCount >= 128) return false;
+        w.sectors[w.sectorCount++] = nextSec;
+        w.curLogicalSector++;
+        w.posInSector = 0;
+        memset(w.buf, 0, SECTOR_SIZE);
+      }
+      int n = (int)strlen(data);
+      if (n > recLen) n = recLen;
+      memcpy(&w.buf[w.posInSector], data, n);
+      for (int i = n; i < recLen; i++) w.buf[w.posInSector + i] = ' ';
+      w.posInSector += recLen;
+      w.numRecords++;
+      return true;
+    }
+
+    // Read one FIXED-length record. Returns recLen on success or -1 at
+    // EOF. If curRecord is non-null, treat as RELATIVE: read record
+    // *curRecord and post-increment.
+    int readFixedRecord(DisVarReader& r, char* out, int outSize, int recLen,
+                        long* curRecord)
+    {
+      if (recLen <= 0 || recLen > 255) return -1;
+      int recsPerSector = SECTOR_SIZE / recLen;
+      if (recsPerSector < 1) return -1;
+
+      long targetRec;
+      if (curRecord)
+      {
+        targetRec = *curRecord;
+        (*curRecord)++;
+      }
+      else
+      {
+        targetRec = (long)r.recordsRead;
+      }
+
+      if (targetRec >= (long)r.info.numRecords)
+      {
+        r.eof = true;
+        return -1;
+      }
+      int targetSector = (int)(targetRec / recsPerSector);
+      int slotInSector = (int)(targetRec % recsPerSector);
+      if (targetSector >= (int)r.info.sectorCount)
+      {
+        r.eof = true;
+        return -1;
+      }
+      if (!r.bufLoaded || r.curLogicalSector != targetSector)
+      {
+        if (!readSector(r.info.sectors[targetSector], r.buf))
+        {
+          r.eof = true;
+          return -1;
+        }
+        r.bufLoaded = true;
+        r.curLogicalSector = targetSector;
+      }
+      int copyLen = (recLen < outSize - 1) ? recLen : outSize - 1;
+      memcpy(out, &r.buf[slotInSector * recLen], copyLen);
+      out[copyLen] = '\0';
+      r.recordsRead++;
+      if (r.recordsRead >= (int)r.info.numRecords) r.eof = true;
+      return recLen;
+    }
+
     bool writeDisVarRecord(DisVarWriter& w, const char* data)
     {
       int len = (int)strlen(data);

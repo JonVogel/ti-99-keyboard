@@ -50,6 +50,11 @@ namespace fio
   enum Device : uint8_t { DEV_NONE = 0, DEV_FLASH = 1, DEV_SD = 2, DEV_DSK = 3 };
   enum Mode   : uint8_t { MODE_INPUT = 0, MODE_OUTPUT = 1, MODE_APPEND = 2, MODE_UPDATE = 3 };
 
+  // Flags passed to openFile in addition to mode.
+  static const int OF_INTERNAL = 0x01;   // TI radix-100 encoding (parsed; falls back to DISPLAY)
+  static const int OF_FIXED    = 0x02;   // FIXED record length
+  static const int OF_RELATIVE = 0x04;   // RELATIVE access (REC=K)
+
   struct Slot
   {
     bool    inUse = false;
@@ -64,6 +69,12 @@ namespace fio
     dsk::DskImage::DisVarReader dskRdr{};
     dsk::DskImage::DisVarWriter dskWtr{};
     bool    dskWriting = false;
+    // Open mode flags (FIXED / INTERNAL / RELATIVE) and FIXED-record
+    // length / RELATIVE current record number. recLen == 0 means
+    // VARIABLE.
+    int     flags = 0;
+    int     recLen = 0;
+    long    curRecord = 0;
   };
 
   inline Slot g_slots[MAX_FILES + 1];   // index 1..MAX_FILES; [0] unused
@@ -232,7 +243,8 @@ namespace fio
   // OPEN: returns 0 on success, non-zero error code otherwise.
   // err=1: bad unit, 2: already open, 3: bad spec, 4: device unavailable,
   // 5: unsupported mode, 6: file system error
-  inline int openFile(int unit, const char* spec, Mode mode)
+  inline int openFile(int unit, const char* spec, Mode mode,
+                      int flags = 0, int recLen = 0)
   {
     if (!unitValid(unit)) return 1;
     Slot& s = g_slots[unit];
@@ -250,9 +262,13 @@ namespace fio
       if (mode == MODE_OUTPUT)
       {
         if (img->readOnly()) return 5;
-        if (!img->openDisVarWriter(path, s.dskWtr)) return 6;
+        bool ok = (flags & OF_FIXED)
+                    ? img->openFixedWriter(path, s.dskWtr)
+                    : img->openDisVarWriter(path, s.dskWtr);
+        if (!ok) return 6;
         s.inUse = true; s.device = DEV_DSK; s.mode = mode;
         s.eof = false; s.dskDrive = drive; s.dskWriting = true;
+        s.flags = flags; s.recLen = recLen; s.curRecord = 0;
         snprintf(s.path, sizeof(s.path), "%s", path);
         return 0;
       }
@@ -260,11 +276,14 @@ namespace fio
       {
         dsk::FileInfo info;
         if (!img->findFile(path, info)) return 6;
-        // Refuse PROGRAM / INTERNAL files in Phase 1 — only DIS/VAR.
         if (info.flags & 0x01) return 5;    // PROGRAM
-        if (info.flags & 0x02) return 5;    // INTERNAL
+        if (info.flags & 0x02) return 5;    // INTERNAL not supported on read
         s.inUse = true; s.device = DEV_DSK; s.mode = mode;
         s.eof = false; s.dskDrive = drive; s.dskWriting = false;
+        s.flags = flags;
+        // FIXED: prefer caller-supplied recLen, but fall back to FDR.
+        s.recLen = recLen ? recLen : info.recLen;
+        s.curRecord = 0;
         snprintf(s.path, sizeof(s.path), "%s", path);
         if (!img->openDisVarReader(info, s.dskRdr)) s.eof = true;
         return 0;
@@ -276,6 +295,12 @@ namespace fio
     if (mode == MODE_OUTPUT)      openMode = "w";
     else if (mode == MODE_APPEND) openMode = "a";
     else if (mode == MODE_UPDATE) openMode = "r+";
+
+    // FIXED-record output may seek backwards (RELATIVE) or past EOF, so
+    // we need a handle that supports both reading-back and seeking. "w+"
+    // is identical to "w" except it also opens for read, which is what
+    // FS layers need to allow arbitrary seeks.
+    if (mode == MODE_OUTPUT && (flags & OF_FIXED)) openMode = "w+";
 
     File fh;
     if (dev == DEV_FLASH)
@@ -293,8 +318,53 @@ namespace fio
     s.mode = mode;
     s.fh = fh;
     s.eof = false;
+    s.flags = flags;
+    s.recLen = recLen;
+    s.curRecord = 0;
     snprintf(s.path, sizeof(s.path), "%s", path);
     return 0;
+  }
+
+  // Seek a FIXED-record file to record number `rec`. For DSK images the
+  // actual seek happens at I/O time (the writer/reader honors curRecord
+  // when OF_RELATIVE is set); for FLASH/SD we do a byte seek now.
+  // Returns false on bad unit or seek failure.
+  inline bool seekRecord(int unit, long rec)
+  {
+    if (!unitValid(unit) || !g_slots[unit].inUse) return false;
+    Slot& s = g_slots[unit];
+    if (s.recLen <= 0) return false;
+    s.curRecord = rec;
+    // An explicit REC=K is itself a RELATIVE-style positioning request,
+    // even if the file was OPENed without RELATIVE — tag it so the DSK
+    // path honors targetRec on the next I/O.
+    s.flags |= OF_RELATIVE;
+    if (s.device == DEV_DSK) return true;
+    uint32_t offset = (uint32_t)rec * (uint32_t)s.recLen;
+    // If we're seeking past EOF on a writable handle, pad the file out
+    // to the target with spaces so the seek lands on real bytes.
+    // LittleFS won't extend a file via plain seek; subsequent writes
+    // would silently land at position 0 otherwise.
+    if (s.mode == MODE_OUTPUT || s.mode == MODE_APPEND ||
+        s.mode == MODE_UPDATE)
+    {
+      uint32_t curSize = (uint32_t)s.fh.size();
+      if (offset > curSize)
+      {
+        s.fh.seek(curSize);
+        uint8_t pad[16];
+        memset(pad, ' ', sizeof(pad));
+        uint32_t need = offset - curSize;
+        while (need > 0)
+        {
+          uint32_t chunk = need > sizeof(pad) ? sizeof(pad) : need;
+          s.fh.write(pad, chunk);
+          need -= chunk;
+        }
+        s.fh.flush();
+      }
+    }
+    return s.fh.seek(offset);
   }
 
   inline int closeFile(int unit)
@@ -307,7 +377,11 @@ namespace fio
       if (s.dskWriting)
       {
         dsk::DskImage* img = dskImage(s.dskDrive);
-        if (img) img->closeDisVarWriter(s.dskWtr);
+        if (img)
+        {
+          if (s.flags & OF_FIXED) img->closeFixedWriter(s.dskWtr, s.recLen);
+          else                    img->closeDisVarWriter(s.dskWtr);
+        }
       }
     }
     else
@@ -319,6 +393,9 @@ namespace fio
     s.eof = false;
     s.dskDrive = 0;
     s.dskWriting = false;
+    s.flags = 0;
+    s.recLen = 0;
+    s.curRecord = 0;
     s.path[0] = '\0';
     return 0;
   }
@@ -333,7 +410,28 @@ namespace fio
     {
       dsk::DskImage* img = dskImage(s.dskDrive);
       if (!img) return 4;
+      if (s.flags & OF_FIXED)
+      {
+        return img->writeFixedRecord(s.dskWtr, text, s.recLen,
+                                     (s.flags & OF_RELATIVE) ? &s.curRecord
+                                                             : nullptr)
+                  ? 0 : 6;
+      }
       return img->writeDisVarRecord(s.dskWtr, text) ? 0 : 6;
+    }
+
+    if (s.flags & OF_FIXED)
+    {
+      // FIXED: write exactly recLen bytes, space-padded or truncated.
+      // RELATIVE: caller has already seekRecord'd; we just write at the
+      // current position and bump curRecord.
+      int n = (int)strlen(text);
+      if (n > s.recLen) n = s.recLen;
+      s.fh.write((const uint8_t*)text, n);
+      for (int i = n; i < s.recLen; i++) s.fh.write((uint8_t)' ');
+      s.fh.flush();
+      s.curRecord++;
+      return 0;
     }
 
     s.fh.print(text);
@@ -354,9 +452,37 @@ namespace fio
     {
       dsk::DskImage* img = dskImage(s.dskDrive);
       if (!img) { s.eof = true; buf[0] = '\0'; return 2; }
+      if (s.flags & OF_FIXED)
+      {
+        int len = img->readFixedRecord(s.dskRdr, buf, bufSize, s.recLen,
+                                       (s.flags & OF_RELATIVE) ? &s.curRecord
+                                                               : nullptr);
+        if (len < 0) { s.eof = true; buf[0] = '\0'; return 2; }
+        if (s.dskRdr.eof) s.eof = true;
+        return 0;
+      }
       int len = img->readDisVarRecord(s.dskRdr, buf, bufSize);
       if (len < 0) { s.eof = true; buf[0] = '\0'; return 2; }
       if (s.dskRdr.eof) s.eof = true;
+      return 0;
+    }
+
+    if (s.flags & OF_FIXED)
+    {
+      // FIXED: read exactly recLen bytes, strip trailing spaces.
+      if (!s.fh.available())
+      {
+        s.eof = true; buf[0] = '\0'; return 2;
+      }
+      int want = s.recLen;
+      if (want > bufSize - 1) want = bufSize - 1;
+      int n = s.fh.read((uint8_t*)buf, want);
+      if (n <= 0) { s.eof = true; buf[0] = '\0'; return 2; }
+      // Pop trailing spaces (FIXED-mode pad) so caller sees the logical text.
+      while (n > 0 && buf[n - 1] == ' ') n--;
+      buf[n] = '\0';
+      s.curRecord++;
+      if (!s.fh.available()) s.eof = true;
       return 0;
     }
 

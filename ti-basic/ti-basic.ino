@@ -219,6 +219,7 @@ static const KeywordEntry keywords[] =
   {"NUMBER",     TOK_NUM},
   {"NUM",        TOK_NUM},
   {"PRINT",      TOK_PRINT},
+  {"USING",      TOK_USING},
   {"DISPLAY",    TOK_DISPLAY},
   {"ACCEPT",     TOK_ACCEPT},
   {"GOTO",       TOK_GOTO},
@@ -272,6 +273,7 @@ static const KeywordEntry keywords[] =
   {"FIXED",      TOK_FIXED},
   {"PERMANENT",  TOK_PERMANENT},
   {"VARIABLE",   TOK_VARIABLE_KW},
+  {"REC",        TOK_REC},
   {"DELETE",     TOK_DELETE},
   {"IMAGE",      TOK_IMAGE},
   {"TRACE",      TOK_TRACE},
@@ -362,8 +364,11 @@ static int tokenizeLine(const char* src, uint8_t* tokens, int maxLen)
       break;
     }
 
-    // REM — rest of line is literal text
-    if (out > 0 && tokens[out - 1] == TOK_REM)
+    // REM or IMAGE — rest of line is literal text. (IMAGE captures the
+    // format string verbatim so it can be looked up later by
+    // PRINT USING <lineN>.)
+    if (out > 0 &&
+        (tokens[out - 1] == TOK_REM || tokens[out - 1] == TOK_IMAGE))
     {
       int remLen = strlen(&src[pos]);
       if (out + 2 + remLen >= maxLen)
@@ -2740,9 +2745,10 @@ static void cmdUnmount(int drive)
 }
 
 // --- File I/O shims (wired into TokenParser via setFileCallbacks) ---
-static int shimFileOpen(int unit, const char* spec, int mode)
+static int shimFileOpen(int unit, const char* spec, int mode,
+                        int flags, int recLen)
 {
-  return fio::openFile(unit, spec, (fio::Mode)mode);
+  return fio::openFile(unit, spec, (fio::Mode)mode, flags, recLen);
 }
 static int shimFileClose(int unit) { return fio::closeFile(unit); }
 static int shimFilePrint(int unit, const char* text)
@@ -2754,6 +2760,10 @@ static int shimFileReadLine(int unit, char* buf, int bufSize)
   return fio::readLineFrom(unit, buf, bufSize);
 }
 static bool shimFileEof(int unit) { return fio::isEof(unit); }
+static bool shimFileSeekRec(int unit, long rec)
+{
+  return fio::seekRecord(unit, rec);
+}
 
 // TokenParser's CmdDirFn is void(), so register this wrapper for the
 // (currently unused) tokenized TOK_DIR path. Pre-tokenize dispatch in
@@ -3351,6 +3361,7 @@ void setup()
   em.tp()->setCmdContinue(cmdContinue);
   em.tp()->setFileCallbacks(shimFileOpen, shimFileClose, shimFilePrint,
                             shimFileReadLine, shimFileEof);
+  em.tp()->setFileSeekRec(shimFileSeekRec);
 
   em.tp()->setSpriteCallbacks(
       /*draw=*/[](int n)  { if (sprites::validSlot(n)) spriteDraw (sprites::g_sprites[n]); },
@@ -3364,6 +3375,25 @@ void setup()
   });
   em.setProgramEnded(gfxReset);
   em.setPerLineTick(spriteTick);
+
+  // Look up an IMAGE line by line number. Walks the program, finds
+  // the line, and if it starts with TOK_IMAGE + TOK_QUOTED_STR returns
+  // a pointer to the format string and its length.
+  em.tp()->setImageLookup([](uint16_t lineNum,
+                             const char** outStr, int* outLen) -> bool {
+    int idx = em.findLineIndex(lineNum);
+    if (idx >= em.programSize()) return false;
+    ProgramLine* pl = em.getLine(idx);
+    if (!pl || pl->lineNum != lineNum) return false;
+    if (pl->length < 3) return false;
+    if (pl->tokens[0] != TOK_IMAGE) return false;
+    if (pl->tokens[1] != TOK_QUOTED_STR &&
+        pl->tokens[1] != TOK_UNQUOTED_STR) return false;
+    int sLen = pl->tokens[2];
+    *outStr = (const char*)&pl->tokens[3];
+    *outLen = sLen;
+    return true;
+  });
   em.setPrepareInput(gfxPrepareInput);
   em.setPrintLine(printLine);
   em.setPrintError(printError);

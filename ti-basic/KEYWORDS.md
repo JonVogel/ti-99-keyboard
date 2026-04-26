@@ -71,17 +71,20 @@ Status legend:
 | SUB            |  ✅  |  ✅  | Numeric+string params, pass-by-value-result  |
 | SUBEND         |  ✅  |  ✅  |                                              |
 | SUBEXIT        |  ✅  |  ✅  | Early return from subprogram                 |
-| OPEN           |  ✅  |      | `OPEN #n:"FLASH.NAME"` or `"DSK1.NAME"`; DSK1..3 = V9T9 `.dsk` (Phase 1: DIS/VAR INPUT only) |
+| OPEN           |  ✅  |  ✅  | `OPEN #n:"FLASH.NAME"`/`"SDCARD.NAME"`/`"DSKn.NAME"`; DIS/VAR + FIXED + RELATIVE; INTERNAL parsed (treated as DISPLAY) |
 | CLOSE          |  ✅  |      | `CLOSE #n [,#m ...]`                         |
-| PRINT #        |  ✅  |      | One line per statement; `;` and `,` work     |
-| INPUT #        |  ✅  |      | Comma-split from one line                    |
-| LINPUT #       |  ✅  |      | Whole line into first string var             |
+| PRINT #        |  ✅  |  ✅  | One line per statement; `;` and `,` work; `,REC k` for relative access |
+| INPUT #        |  ✅  |      | Comma-split from one line; `,REC k` for relative access |
+| LINPUT #       |  ✅  |  ✅  | Whole line into first string var; `,REC k` for relative access |
 | EOF(n)         |  ✅  |      | -1 at end-of-file, 0 otherwise               |
 | RESTORE #      |      |      |                                              |
 | DELETE (file)  |      |      |                                              |
-| IMAGE          |      |      | Format string for PRINT USING                |
-| PRINT USING    |      |      |                                              |
-| DISPLAY USING  |      |      |                                              |
+| FIXED N        |  ✅  |  ✅  | `OPEN ...,FIXED 80` — N-byte records, no LF terminator |
+| RELATIVE       |  ✅  |  ✅  | `OPEN ...,RELATIVE` — pair with `REC k` on PRINT/INPUT |
+| INTERNAL       | (✅) |      | **Known limitation:** parsed but stored as DISPLAY (no radix-100). Not interoperable with real TI INTERNAL files. See EXTENSIONS.md. |
+| IMAGE          |  ✅  |  ✅  | Stored verbatim; looked up by line# from PRINT USING |
+| PRINT USING    |  ✅  |  ✅  | `PRINT USING <lineN>:` or `PRINT USING <str>:`; `#` `.` `+` `-` `^^^^` edit chars |
+| DISPLAY USING  |  ✅  |  ✅  | DISPLAY AT(...) USING — same format engine    |
 
 ## Operators
 
