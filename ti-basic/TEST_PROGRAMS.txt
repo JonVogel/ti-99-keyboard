@@ -1327,25 +1327,45 @@ NEW
 RUN
 (Expected: ANY COLLIDE: 0 — no sprites overlap at those positions.)
 
---- Part E: two sprites bouncing off walls and each other ---
-The full classic-arcade demo — wall-bounce + sprite-sprite collision.
-The collision logic flips both velocities; press any key to stop.
+--- Part E: three sprites bouncing off walls and each other ---
+The full classic-arcade demo — wall-bounce + pairwise sprite-sprite
+collision, with Pac-Man, a Ghost, and a Space Invader as the three
+sprites. Three pairs (1,2) (1,3) (2,3) are checked each frame; any
+collision flips both colliders' velocities. Press any key to stop.
+
+Patterns (8-byte hex, top row → bottom row):
+  Pac-Man:        3C7EE0E0E0E07E3C  (mouth-open to the right)
+  Ghost:          3C7EDBDBFFFFFFDB  (rounded top, eye-holes, feet)
+  Space Invader:  24183C66FFBDA542  (antennae + body + legs)
+
 NEW
 10 CALL CLEAR
-20 R1V=8 :: C1V=12 :: R2V=-6 :: C2V=-10
-30 CALL SPRITE(#1, 65, 2, 50, 50, R1V, C1V)
-40 CALL SPRITE(#2, 79, 7, 150, 200, R2V, C2V)
-50 CALL POSITION(#1, R1, C1) :: CALL POSITION(#2, R2, C2)
-60 IF (R1<2 AND R1V<0) OR (R1>176 AND R1V>0) THEN R1V=-R1V :: CALL MOTION(#1, R1V, C1V)
-70 IF (C1<2 AND C1V<0) OR (C1>240 AND C1V>0) THEN C1V=-C1V :: CALL MOTION(#1, R1V, C1V)
-80 IF (R2<2 AND R2V<0) OR (R2>176 AND R2V>0) THEN R2V=-R2V :: CALL MOTION(#2, R2V, C2V)
-90 IF (C2<2 AND C2V<0) OR (C2>240 AND C2V>0) THEN C2V=-C2V :: CALL MOTION(#2, R2V, C2V)
-100 CALL COINC(#1, #2, 12, H)
-110 IF H=-1 THEN R1V=-R1V :: C1V=-C1V :: R2V=-R2V :: C2V=-C2V :: CALL MOTION(#1, R1V, C1V) :: CALL MOTION(#2, R2V, C2V)
-120 CALL KEY(0,K,S) :: IF S<1 THEN 50
+15 CALL SCREEN(2)
+20 CALL CHAR(128,"3C7EE0E0E0E07E3C")
+30 CALL CHAR(129,"3C7EDBDBFFFFFFDB")
+40 CALL CHAR(130,"24183C66FFBDA542")
+50 R1V=8 :: C1V=12 :: R2V=-6 :: C2V=-10 :: R3V=10 :: C3V=-8
+60 CALL SPRITE(#1, 128,  9, 50, 50, R1V, C1V)
+70 CALL SPRITE(#2, 129, 16, 150, 200, R2V, C2V)
+80 CALL SPRITE(#3, 130, 13, 100, 130, R3V, C3V)
+90 CALL POSITION(#1, R1, C1) :: CALL POSITION(#2, R2, C2) :: CALL POSITION(#3, R3, C3)
+100 IF (R1<2 AND R1V<0) OR (R1>176 AND R1V>0) THEN R1V=-R1V :: CALL MOTION(#1, R1V, C1V)
+110 IF (C1<2 AND C1V<0) OR (C1>240 AND C1V>0) THEN C1V=-C1V :: CALL MOTION(#1, R1V, C1V)
+120 IF (R2<2 AND R2V<0) OR (R2>176 AND R2V>0) THEN R2V=-R2V :: CALL MOTION(#2, R2V, C2V)
+130 IF (C2<2 AND C2V<0) OR (C2>240 AND C2V>0) THEN C2V=-C2V :: CALL MOTION(#2, R2V, C2V)
+140 IF (R3<2 AND R3V<0) OR (R3>176 AND R3V>0) THEN R3V=-R3V :: CALL MOTION(#3, R3V, C3V)
+150 IF (C3<2 AND C3V<0) OR (C3>240 AND C3V>0) THEN C3V=-C3V :: CALL MOTION(#3, R3V, C3V)
+160 CALL COINC(#1, #2, 12, H)
+170 IF H=-1 THEN R1V=-R1V :: C1V=-C1V :: R2V=-R2V :: C2V=-C2V :: CALL MOTION(#1, R1V, C1V) :: CALL MOTION(#2, R2V, C2V)
+180 CALL COINC(#1, #3, 12, H)
+190 IF H=-1 THEN R1V=-R1V :: C1V=-C1V :: R3V=-R3V :: C3V=-C3V :: CALL MOTION(#1, R1V, C1V) :: CALL MOTION(#3, R3V, C3V)
+200 CALL COINC(#2, #3, 12, H)
+210 IF H=-1 THEN R2V=-R2V :: C2V=-C2V :: R3V=-R3V :: C3V=-C3V :: CALL MOTION(#2, R2V, C2V) :: CALL MOTION(#3, R3V, C3V)
+220 CALL KEY(0,K,S) :: IF S<1 THEN 90
 RUN
-(Expected: A and O carom off all four walls and off each other until
-you press a key.)
+(Expected: a yellow Pac-Man, a white Ghost, and a green Space Invader
+carom off all four walls and off each other until you press a key.
+Three-way pile-ups are common.)
 
 --- Part F: COINC ALL with mixed-size sprites ---
 Verify COINC ALL respects each sprite's actual on-screen footprint.
