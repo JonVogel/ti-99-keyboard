@@ -796,6 +796,11 @@ static void initDisplay()
   digitalWrite(TFT_BL, LOW);
 
   tft->begin();
+  // 180° rotation puts the SD-card slot / connectors at the top of
+  // the visible image. RGB panels usually only honor rotation 0
+  // natively; if 2 doesn't take, drawing will look unrotated and we
+  // can fall back to app-level coordinate flipping.
+  tft->setRotation(2);
   tft->fillScreen(0x0000);   // black surround until fillBackground runs
 
   digitalWrite(TFT_BL, HIGH);
