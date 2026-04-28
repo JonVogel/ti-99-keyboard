@@ -19,6 +19,7 @@
 
 #include <Arduino_GFX_Library.h>
 #include <LittleFS.h>
+#include "rgb_db.h"
 #include "ti_font.h"
 #include "ble_keyboard.h"
 #include "exec_manager.h"
@@ -708,9 +709,13 @@ static int detokenizeLine(const uint8_t* tokens, int length, char* buf,
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Arduino_GFX RGB panel driver (ESP32-8048S043C pin map)
+// Forked RGB panel driver — DOUBLE-BUFFERED.
+// rgb_db.h/.cpp contain a minimal fork of Arduino_GFX's RGB panel that
+// enables the ESP_LCD double_fb mode. CPU writes land in the back
+// buffer; commitFrame() (called via tft->flush()) swaps front/back at
+// vsync for tear-free output. See rgb_db.h for full rationale.
 // ---------------------------------------------------------------------------
-static Arduino_ESP32RGBPanel *rgbBus = new Arduino_ESP32RGBPanel(
+static Arduino_ESP32RGBPanelDB *rgbBus = new Arduino_ESP32RGBPanelDB(
     40 /* DE */, 41 /* VSYNC */, 39 /* HSYNC */, 42 /* PCLK */,
     45 /* R0 */, 48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */,
     5  /* G0 */, 6  /* G1 */, 7  /* G2 */, 15 /* G3 */, 16 /* G4 */, 4 /* G5 */,
@@ -723,9 +728,7 @@ static Arduino_ESP32RGBPanel *rgbBus = new Arduino_ESP32RGBPanel(
     20 * 800         // bounce_buffer_size_px (20 lines × 800 px = 32 KB SRAM)
 );
 
-static Arduino_RGB_Display *tft = new Arduino_RGB_Display(
-    800, 480, rgbBus, 0 /* rotation */, true /* auto_flush */
-);
+static RGBDisplayDB *tft = new RGBDisplayDB(800, 480, rgbBus);
 
 static int cursorCol = 0;
 static int cursorRow = 0;
@@ -802,6 +805,7 @@ static void initDisplay()
   // can fall back to app-level coordinate flipping.
   tft->setRotation(2);
   tft->fillScreen(0x0000);   // black surround until fillBackground runs
+  tft->flush();              // commit so panel actually shows it
 
   digitalWrite(TFT_BL, HIGH);
 }
@@ -904,11 +908,106 @@ static void spriteCellBounds(const sprites::Sprite& s,
   if (c1 > COLS - 1) c1 = COLS - 1;
 }
 
+// --- Save-under buffer for sprite erase ---
+//
+// Re-rendering N character cells per erase is the visible-flicker
+// bottleneck. Instead, when a sprite is drawn we render the cells it
+// covers into a per-sprite PSRAM buffer ("save-under"), then on erase
+// we blit that buffer back in a single draw16bitRGBBitmap call —
+// orders of magnitude faster than walking 1-9 cells through the panel
+// pixel by pixel.
+//
+// Footprint upper bound is mag-4 = 64x64 display pixels, which can
+// straddle up to 5x5 = 80x80 cell-aligned region. 80*80*2 = 12.8 KB
+// per sprite × 28 sprites = ~360 KB in PSRAM (lazy-allocated when a
+// slot is first used).
+static const int SPRITE_SAVE_MAX_DIM = 80;
+static const int SPRITE_SAVE_MAX_PX  = SPRITE_SAVE_MAX_DIM * SPRITE_SAVE_MAX_DIM;
+struct SpriteSave
+{
+  uint16_t* pixels = nullptr;
+  int  x = 0, y = 0, w = 0, h = 0;
+  bool valid = false;
+};
+static SpriteSave g_spriteSave[sprites::MAX_SPRITES + 1];
+
+// Shared scratch used to composite (chars + sprite pixels) before
+// blitting in a single draw16bitRGBBitmap call. Per-pixel writes to
+// the panel are the dominant source of tearing during scanout.
+static uint16_t* g_spriteCompBuf = nullptr;
+static void ensureSpriteCompBuf()
+{
+  if (g_spriteCompBuf) return;
+  g_spriteCompBuf = (uint16_t*)heap_caps_malloc(
+      SPRITE_SAVE_MAX_PX * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+}
+
+static int spriteIndexOf(const sprites::Sprite& s)
+{
+  return (int)(&s - &sprites::g_sprites[0]);
+}
+
+static void ensureSpriteSaveBuf(int slot)
+{
+  if (slot < 0 || slot > sprites::MAX_SPRITES) return;
+  if (g_spriteSave[slot].pixels) return;
+  g_spriteSave[slot].pixels = (uint16_t*)heap_caps_malloc(
+      SPRITE_SAVE_MAX_PX * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+}
+
+// Render the chars in cell rect (c0..c1, r0..r1) into dst as a tightly
+// packed `w`×`h` RGB565 bitmap. Same per-pixel logic as drawCell but
+// targets memory instead of the panel.
+static void renderCellsToBuffer(int r0, int c0, int r1, int c1,
+                                uint16_t* dst, int w)
+{
+  for (int rOff = 0; rOff <= r1 - r0; rOff++)
+  {
+    for (int cOff = 0; cOff <= c1 - c0; cOff++)
+    {
+      int cellR = r0 + rOff;
+      int cellC = c0 + cOff;
+      if (cellR < 0 || cellR >= ROWS || cellC < 0 || cellC >= COLS) continue;
+      uint8_t ch = (uint8_t)screenBuf[cellR][cellC];
+      uint16_t fg = resolveColor(charFgIdx[ch]);
+      uint16_t bg = resolveColor(charBgIdx[ch]);
+      int dstX0 = cOff * CHAR_W;
+      int dstY0 = rOff * CHAR_H;
+      for (int py = 0; py < 8; py++)
+      {
+        uint8_t bits = charPatterns[ch][py];
+        uint16_t* row0 = &dst[(dstY0 + py * 2)     * w + dstX0];
+        uint16_t* row1 = &dst[(dstY0 + py * 2 + 1) * w + dstX0];
+        for (int px = 0; px < 8; px++)
+        {
+          uint16_t c = (bits & 0x80) ? fg : bg;
+          row0[px * 2]     = c;
+          row0[px * 2 + 1] = c;
+          row1[px * 2]     = c;
+          row1[px * 2 + 1] = c;
+          bits <<= 1;
+        }
+      }
+    }
+  }
+}
+
 // Repaint the character cells under the sprite so the char grid is
-// visible where the sprite used to be.
+// visible where the sprite used to be. Fast path: blit the save-under
+// buffer captured by spriteDraw. Fallback: per-cell drawCell (used
+// when no save buf is allocated yet, e.g. initial draw after CALL
+// SPRITE).
 static void spriteErase(const sprites::Sprite& s)
 {
   if (!s.active) return;
+  int slot = spriteIndexOf(s);
+  SpriteSave& sv = g_spriteSave[slot];
+  if (sv.valid && sv.pixels)
+  {
+    tft->draw16bitRGBBitmap(sv.x, sv.y, sv.pixels, sv.w, sv.h);
+    sv.valid = false;
+    return;
+  }
   int r0, c0, r1, c1;
   spriteCellBounds(s, r0, c0, r1, c1);
   for (int r = r0; r <= r1; r++)
@@ -925,14 +1024,88 @@ static void spriteErase(const sprites::Sprite& s)
 static void spriteDraw(const sprites::Sprite& s)
 {
   if (!s.active) return;
+
+  int slot = spriteIndexOf(s);
+  int r0, c0, r1, c1;
+  spriteCellBounds(s, r0, c0, r1, c1);
+  int saveW = (c1 - c0 + 1) * CHAR_W;
+  int saveH = (r1 - r0 + 1) * CHAR_H;
+  int saveX = c0 * CHAR_W + DISPLAY_X_OFFSET;
+  int saveY = r0 * CHAR_H + DISPLAY_Y_OFFSET;
+
+  // Hard fallback: if footprint is bigger than our scratch buffer
+  // (shouldn't happen — even mag-4 fits in 80×80 cell-aligned), or
+  // we're out of PSRAM, fall back to per-pixel paint.
+  if (saveW <= 0 || saveH <= 0 || saveW * saveH > SPRITE_SAVE_MAX_PX)
+  {
+    int body  = sprites::bodySize(s.magnify);
+    int scale = (s.magnify == sprites::MAG_2 ||
+                 s.magnify == sprites::MAG_4) ? 2 : 1;
+    uint16_t fg = resolveColor(s.colorIdx);
+    int baseY = DISPLAY_Y_OFFSET + (s.row - 1) * 2;
+    int baseX = DISPLAY_X_OFFSET + (s.col - 1) * 2;
+    for (int sr = 0; sr < body; sr++)
+    {
+      for (int sc = 0; sc < body; sc++)
+      {
+        if (!sprites::pixelOn(s.charCode, s.magnify, sr, sc, charPatterns))
+        {
+          continue;
+        }
+        int reps = scale * 2;
+        for (int dy = 0; dy < reps; dy++)
+        {
+          for (int dx = 0; dx < reps; dx++)
+          {
+            int py = baseY + sr * reps + dy;
+            int px = baseX + sc * reps + dx;
+            if (py >= DISPLAY_Y_OFFSET &&
+                py < DISPLAY_Y_OFFSET + ROWS * CHAR_H &&
+                px >= DISPLAY_X_OFFSET &&
+                px < DISPLAY_X_OFFSET + COLS * CHAR_W)
+            {
+              tft->writePixel(px, py, fg);
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
+
+  // Fast path: composite chars + sprite pixels into one buffer, then
+  // blit in a single draw16bitRGBBitmap call. This is the key tearing
+  // fix — instead of hundreds of writePixel calls landing during the
+  // panel's bounce-buffer scan, we issue one tight contiguous DMA-
+  // friendly write per sprite update.
+  ensureSpriteSaveBuf(slot);
+  ensureSpriteCompBuf();
+  SpriteSave& sv = g_spriteSave[slot];
+  if (!sv.pixels || !g_spriteCompBuf)
+  {
+    return;   // PSRAM alloc failed — silent skip is fine for now
+  }
+
+  // 1. Render the chars under the sprite into the per-sprite save
+  //    buffer (used by next spriteErase).
+  renderCellsToBuffer(r0, c0, r1, c1, sv.pixels, saveW);
+  sv.x = saveX; sv.y = saveY; sv.w = saveW; sv.h = saveH;
+  sv.valid = true;
+
+  // 2. Copy save buf → composition scratch and overlay sprite pixels.
+  //    Sprite is the only "ON pixels stamp" — transparent pixels keep
+  //    whatever's underneath (just chars in this single-sprite frame).
+  memcpy(g_spriteCompBuf, sv.pixels, (size_t)saveW * saveH * sizeof(uint16_t));
+
   int body  = sprites::bodySize(s.magnify);
   int scale = (s.magnify == sprites::MAG_2 ||
                s.magnify == sprites::MAG_4) ? 2 : 1;
   uint16_t fg = resolveColor(s.colorIdx);
-  // Top-left on physical display. TI pixel (row, col) → physical
-  // (DISPLAY_Y_OFFSET + (row-1)*2, DISPLAY_X_OFFSET + (col-1)*2).
   int baseY = DISPLAY_Y_OFFSET + (s.row - 1) * 2;
   int baseX = DISPLAY_X_OFFSET + (s.col - 1) * 2;
+  int reps = scale * 2;
+  int yMax = DISPLAY_Y_OFFSET + ROWS * CHAR_H;
+  int xMax = DISPLAY_X_OFFSET + COLS * CHAR_W;
   for (int sr = 0; sr < body; sr++)
   {
     for (int sc = 0; sc < body; sc++)
@@ -941,31 +1114,37 @@ static void spriteDraw(const sprites::Sprite& s)
       {
         continue;
       }
-      // Each source pixel becomes a 2x2 block (always), plus another
-      // 2x for magnify 2/4.
-      int reps = scale * 2;
       for (int dy = 0; dy < reps; dy++)
       {
+        int py = baseY + sr * reps + dy;
+        if (py < DISPLAY_Y_OFFSET || py >= yMax) continue;
+        int bufY = py - saveY;
+        if (bufY < 0 || bufY >= saveH) continue;
+        uint16_t* row = &g_spriteCompBuf[bufY * saveW];
         for (int dx = 0; dx < reps; dx++)
         {
-          int py = baseY + sr * reps + dy;
           int px = baseX + sc * reps + dx;
-          if (py >= DISPLAY_Y_OFFSET &&
-              py < DISPLAY_Y_OFFSET + ROWS * CHAR_H &&
-              px >= DISPLAY_X_OFFSET &&
-              px < DISPLAY_X_OFFSET + COLS * CHAR_W)
-          {
-            tft->writePixel(px, py, fg);
-          }
+          if (px < DISPLAY_X_OFFSET || px >= xMax) continue;
+          int bufX = px - saveX;
+          if (bufX < 0 || bufX >= saveW) continue;
+          row[bufX] = fg;
         }
       }
     }
   }
+
+  // 3. Blit the composed frame in one shot.
+  tft->draw16bitRGBBitmap(saveX, saveY, g_spriteCompBuf, saveW, saveH);
 }
 
+// Redraw every active sprite. Order matters: TI Extended BASIC
+// gives sprite #1 the highest priority (it sits on top of #2, which
+// sits on top of #3, ...). Drawing in *reverse* index order means
+// the highest-numbered sprite paints first and the lowest-numbered
+// paints last, so #1 ends up on top.
 static void spriteRedrawAll()
 {
-  for (int i = 1; i <= sprites::MAX_SPRITES; i++)
+  for (int i = sprites::MAX_SPRITES; i >= 1; i--)
   {
     spriteDraw(sprites::g_sprites[i]);
   }
@@ -990,6 +1169,12 @@ static void spriteTick()
   if (frames < 1) frames = 1;
   if (frames > 8) frames = 8;          // catch-up cap to avoid teleport
 
+  // Per-sprite atomic update. After each sprite's erase+draw, redraw
+  // any higher-priority sprites (lower indices) that are active so
+  // they stay on top of the one that just moved. This keeps the
+  // "missing pixel" window short (one sprite's worth of erase before
+  // its own redraw) instead of erasing every moving sprite first.
+  bool anyMoved = false;
   for (int i = 1; i <= sprites::MAX_SPRITES; i++)
   {
     sprites::Sprite& s = sprites::g_sprites[i];
@@ -1009,11 +1194,10 @@ static void spriteTick()
 
     int16_t nr = s.row + dr;
     int16_t nc = s.col + dc;
-    // Wrap at TI screen edges (1..192 rows, 1..256 cols)
-    while (nr < 1)   nr += 192;
-    while (nr > 192) nr -= 192;
-    while (nc < 1)   nc += 256;
-    while (nc > 256) nc -= 256;
+    // No wraparound — TI-faithful. Sprites past the screen edge are
+    // simply off-screen (the renderer clips per-pixel) and CALL
+    // POSITION returns the actual stored row/col so BASIC bounce
+    // checks like `IF R>176 THEN ...` fire correctly.
 
     if (nr != prevRow || nc != prevCol)
     {
@@ -1021,8 +1205,20 @@ static void spriteTick()
       s.row = nr;
       s.col = nc;
       spriteDraw(s);
+      // Restore higher-priority sprites that may overlap #i's new
+      // footprint. Sprite #1 is highest priority and must paint last.
+      for (int p = i - 1; p >= 1; p--)
+      {
+        if (sprites::g_sprites[p].active) spriteDraw(sprites::g_sprites[p]);
+      }
+      anyMoved = true;
     }
   }
+  // Commit the back buffer to the panel — swap takes effect at next
+  // vsync, so the user sees the complete frame all at once instead
+  // of a half-updated one. Skip if nothing moved (commit costs a
+  // ~10 ms full-screen memcpy to refill the new back buffer).
+  if (anyMoved) tft->flush();
 }
 
 static void scrollUp()
@@ -1414,6 +1610,11 @@ static void showBootScreen()
 
   Serial.println("PRESS ANY KEY TO CONTINUE");
 
+  // Commit the title screen so the user actually sees it before the
+  // wait loop. With double-buffering the screen stays black until
+  // flush() is called.
+  tft->flush();
+
   // Wait for any key — from Serial or BLE keyboard. Keep BLE scanning
   // alive so reconnect can complete while we're sitting here.
   while (!Serial.available() && !bleKbAvailable())
@@ -1450,6 +1651,9 @@ static void showBootScreen()
 
   Serial.println("PRESS 1 OR 2 TO CONTINUE");
 
+  // Commit menu screen before the wait loop.
+  tft->flush();
+
   while (!Serial.available() && !bleKbAvailable())
   {
     bleKbTask();
@@ -1462,13 +1666,37 @@ static void showBootScreen()
   clearScreen();
 }
 
+// Render a string into the status bar using TI charPatterns at native
+// 8x8 (one display pixel per source pixel — small text). Replaces
+// Arduino_GFX's setTextColor/setCursor/print (not in our minimal
+// RGBDisplayDB).
+static void drawStatusText(int x, int y, const char* s,
+                           uint16_t fg, uint16_t bg)
+{
+  int cursorX = x;
+  while (*s)
+  {
+    uint8_t ch = (uint8_t)*s++;
+    uint16_t pixBuf[8 * 8];
+    for (int py = 0; py < 8; py++)
+    {
+      uint8_t bits = charPatterns[ch][py];
+      for (int px = 0; px < 8; px++)
+      {
+        pixBuf[py * 8 + px] = (bits & 0x80) ? fg : bg;
+        bits <<= 1;
+      }
+    }
+    tft->draw16bitRGBBitmap(cursorX, y, pixBuf, 8, 8);
+    cursorX += 8;
+    if (cursorX > SCREEN_W) break;
+  }
+}
+
 static void showStatus(const char* msg)
 {
   tft->fillRect(0, STATUS_Y, SCREEN_W, STATUS_H, 0x18E3);
-  tft->setTextColor(0xFFFF, 0x18E3);
-  tft->setCursor(DISPLAY_X_OFFSET, STATUS_Y + 2);
-  tft->print(msg);
-  tft->setTextColor(fgColor, bgColor);
+  drawStatusText(DISPLAY_X_OFFSET, STATUS_Y + 8, msg, 0xFFFF, 0x18E3);
 }
 
 // ---------------------------------------------------------------------------
@@ -2147,6 +2375,43 @@ static void cmdList(int startLine, int endLine)
 static void cmdRun()
 {
   em.run();
+}
+
+// EB-style autorun: at boot, search the conventional storage tiers
+// for a program named "LOAD" and run it. Order:
+//   1. DSK1..DSK<MAX_DSK>           (TI-faithful — PROGRAM-format)
+//   2. FLASH  /LOAD.bas             (our text format)
+//   3. SDCARD /LOAD.bas
+// Returns true if one was found. There's no boot-time escape hatch:
+// CLEAR (FCTN+4 / Ctrl+C / ESC) reliably stops a runaway LOAD program
+// since BASIC has no path to disable that key.
+static bool scanForLoadProgram()
+{
+  for (int d = 1; d <= fio::MAX_DSK; d++)
+  {
+    dsk::DskImage* img = fio::dskImage(d);
+    if (!img) continue;
+    dsk::FileInfo info;
+    if (!img->findFile("LOAD", info)) continue;
+    char spec[16];
+    snprintf(spec, sizeof(spec), "DSK%c.LOAD", fio::driveToChar(d));
+    cmdOld(spec);
+    cmdRun();
+    return true;
+  }
+  if (LittleFS.exists("/LOAD.bas"))
+  {
+    cmdOld("FLASH.LOAD");
+    cmdRun();
+    return true;
+  }
+  if (fio::g_sdOk && SD.exists("/LOAD.bas"))
+  {
+    cmdOld("SDCARD.LOAD");
+    cmdRun();
+    return true;
+  }
+  return false;
 }
 
 static void cmdBye()
@@ -3357,6 +3622,10 @@ void setup()
                                 gfxSetScreenColor, gfxSetCharColor,
                                 gfxSetCharPattern);
   em.tp()->setReadKey(gfxReadKey);
+  em.tp()->setReadJoystick([](int unit, int* outX, int* outY) {
+    *outX = bleGpJoystickX(unit);
+    *outY = bleGpJoystickY(unit);
+  });
   em.tp()->setMoveCursor(gfxMoveCursor);
   em.tp()->setGetCharPattern(gfxGetCharPattern);
   em.tp()->setResetCharset(gfxResetCharset);
@@ -3374,7 +3643,19 @@ void setup()
   em.tp()->setFileRewind(shimFileRewind);
 
   em.tp()->setSpriteCallbacks(
-      /*draw=*/[](int n)  { if (sprites::validSlot(n)) spriteDraw (sprites::g_sprites[n]); },
+      // Drawing one sprite from BASIC (CALL SPRITE / CALL PATTERN /
+      // CALL LOCATE) must not paint it over higher-priority sprites
+      // it overlaps. After drawing #n, redraw #n-1..#1 so any of
+      // them that overlaps stays on top.
+      /*draw=*/[](int n)
+      {
+        if (!sprites::validSlot(n)) return;
+        spriteDraw(sprites::g_sprites[n]);
+        for (int p = n - 1; p >= 1; p--)
+        {
+          if (sprites::g_sprites[p].active) spriteDraw(sprites::g_sprites[p]);
+        }
+      },
       /*erase=*/[](int n) { if (sprites::validSlot(n)) spriteErase(sprites::g_sprites[n]); });
 
   // CALL SPEED routes here. Mirror to both EM (per-line throttle) and
@@ -3417,6 +3698,10 @@ void setup()
 
   Serial.println("TI Extended BASIC Simulator v0.2");
   Serial.println("Type BASIC commands. Serial input active.");
+
+  // EB autorun convention: a program named LOAD on DSK1..n / FLASH /
+  // SDCARD is loaded and run automatically on boot.
+  scanForLoadProgram();
 }
 
 void loop()
@@ -3432,5 +3717,19 @@ void loop()
     printString(">");
     inputPos = 0;
     inputReady = false;
+  }
+
+  // Commit pending writes ~60 Hz max so non-sprite changes (typed
+  // characters, REPL output, screen clears, etc.) reach the panel.
+  // Rate-limited because each commit is a full-screen memcpy on
+  // PSRAM (~10 ms) — running every loop iteration would waste CPU.
+  // Sprite motion already flushes inside spriteTick when a sprite
+  // actually moved, so most active frames are covered there.
+  static uint32_t lastFlush = 0;
+  uint32_t now = millis();
+  if (now - lastFlush >= 16)
+  {
+    tft->flush();
+    lastFlush = now;
   }
 }

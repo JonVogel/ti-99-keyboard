@@ -1616,3 +1616,113 @@ PASS 2: ALPHA BETA
 second pair of LINPUTs reads ALPHA / BETA again instead of GAMMA / EOF.)
 
 
+=== 44. Conway's Game of Life ===
+
+Classic cellular automaton on a 24×32 toroidal grid (edges wrap).
+Each generation applies the four rules:
+  - alive cell with 2 or 3 live neighbors stays alive
+  - alive cell otherwise dies (loneliness or overcrowding)
+  - dead cell with exactly 3 live neighbors comes alive
+  - everything else stays dead
+The seed plants three classic patterns: a still-life "block" in the
+upper-left, a period-2 "blinker" in the middle, and a glider that
+walks down-and-right (and reappears at the top-left corner thanks
+to the toroidal edges). Press any key to stop.
+
+NEW
+10 CALL CLEAR
+15 CALL COLOR(2,16,1)
+20 DIM A(24,32),B(24,32)
+30 REM SEEDS: BLOCK, BLINKER, GLIDER
+40 A(3,3)=1
+41 A(3,4)=1
+42 A(4,3)=1
+43 A(4,4)=1
+50 A(10,10)=1
+51 A(10,11)=1
+52 A(10,12)=1
+60 A(15,6)=1
+61 A(16,7)=1
+62 A(17,5)=1
+63 A(17,6)=1
+64 A(17,7)=1
+70 REM INITIAL PAINT
+80 FOR R=1 TO 24
+81 FOR C=1 TO 32
+82 IF A(R,C)=0 THEN 90
+85 CALL HCHAR(R,C,42)
+90 NEXT C
+91 NEXT R
+100 REM COMPUTE NEXT GENERATION
+110 FOR R=1 TO 24
+111 FOR C=1 TO 32
+120 N=0
+130 FOR DR=-1 TO 1
+131 FOR DC=-1 TO 1
+140 IF DR<>0 THEN 150
+141 IF DC=0 THEN 180
+150 RR=R+DR
+151 IF RR<1 THEN RR=RR+24
+152 IF RR>24 THEN RR=RR-24
+160 CC=C+DC
+161 IF CC<1 THEN CC=CC+32
+162 IF CC>32 THEN CC=CC-32
+170 N=N+A(RR,CC)
+180 NEXT DC
+181 NEXT DR
+190 B(R,C)=0
+191 IF A(R,C)<>1 THEN 195
+192 IF N=2 THEN B(R,C)=1
+193 IF N=3 THEN B(R,C)=1
+194 GOTO 200
+195 IF N=3 THEN B(R,C)=1
+200 NEXT C
+201 NEXT R
+210 REM APPLY DELTAS
+220 FOR R=1 TO 24
+221 FOR C=1 TO 32
+230 IF B(R,C)=A(R,C) THEN 250
+240 IF B(R,C)=1 THEN CALL HCHAR(R,C,42) ELSE CALL HCHAR(R,C,32)
+241 A(R,C)=B(R,C)
+250 NEXT C
+251 NEXT R
+260 CALL KEY(0,K,S)
+261 IF S<1 THEN 110
+270 END
+RUN
+
+Expected:
+- Block (top-left) sits unchanged forever.
+- Blinker (middle) flips between horizontal and vertical every gen.
+- Glider walks diagonally down-right, wraps at the edges.
+
+Generation rate is BASIC-bound (~6000 array reads + 768 cell
+checks per gen). On the ESP32 fast-path that's a few generations
+per second — fast enough to watch the glider crawl.
+
+
+=== 45. CALL JOYST — gamepad / arrow-key driven sprite ===
+
+Move a sprite around the screen with the BLE gamepad (8BitDo Zero 2)
+or the keyboard arrow keys. Single-pad scope: unit 1 only. unit 2
+always reports centered.
+
+NEW
+10 CALL CLEAR
+20 CALL SPRITE(#1,42,16,96,128,0,0)
+30 CALL JOYST(1,X,Y)
+40 RV=-Y/4*8
+50 CV=X/4*8
+60 CALL MOTION(#1,RV,CV)
+70 CALL KEY(0,K,S)
+80 IF S<1 THEN 30
+90 END
+RUN
+
+Expected: an asterisk sprite at center screen that follows the
+D-pad (or arrow keys if the Zero 2 is in keyboard mode). Press a
+key to stop. The math at lines 40-50 converts TI's -4/0/+4 axis to
+sprite velocity 8 sub-pixels/frame; Y is negated because TI's
+joystick has +up but sprite row coords have +down.
+
+

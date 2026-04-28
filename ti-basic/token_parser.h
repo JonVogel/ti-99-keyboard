@@ -34,6 +34,8 @@ typedef void (*SetCharPatternFn)(int charCode, const uint8_t* pattern8);
 typedef void (*GetCharPatternFn)(int charCode, uint8_t* out8);
 typedef void (*ResetCharsetFn)();
 typedef int  (*ReadKeyFn)();           // returns 0 = no key, else char code
+// CALL JOYST(unit, X, Y) — fills X and Y with -4 / 0 / +4 axis state.
+typedef void (*ReadJoystickFn)(int unit, int* outX, int* outY);
 typedef void (*MoveCursorFn)(int row, int col);
 
 // DATA support: EM scans program for next DATA value.
@@ -135,6 +137,7 @@ public:
   }
 
   void setReadKey(ReadKeyFn rk) { m_readKey = rk; }
+  void setReadJoystick(ReadJoystickFn fn) { m_readJoystick = fn; }
   void setMoveCursor(MoveCursorFn mc) { m_moveCursor = mc; }
   void setGetCharPattern(GetCharPatternFn fn) { m_getCharPattern = fn; }
   void setResetCharset(ResetCharsetFn fn)     { m_resetCharset   = fn; }
@@ -636,6 +639,28 @@ public:
           resp.result = TP_STOPPED;
           return resp;
 
+        case TOK_ELSE:
+          // Reaching ELSE on the main dispatcher means a successful
+          // THEN branch just finished — the ELSE clause must be
+          // discarded. Without this, `IF c THEN x ELSE y` would run
+          // BOTH x and y when c is true.
+          while (pos < length && tokens[pos] != TOK_EOL)
+          {
+            uint8_t t = tokens[pos];
+            if (t == TOK_QUOTED_STR || t == TOK_UNQUOTED_STR ||
+                t == TOK_STRING_LIT)
+            {
+              pos++;
+              int slen = tokens[pos++];
+              pos += slen;
+            }
+            else
+            {
+              pos++;
+            }
+          }
+          break;
+
         case TOK_OPEN:
           pos++;
           resp = execOpen(tokens, &pos);
@@ -769,6 +794,7 @@ private:
   GetCharPatternFn m_getCharPattern = NULL;
   ResetCharsetFn   m_resetCharset   = NULL;
   ReadKeyFn m_readKey = NULL;
+  ReadJoystickFn m_readJoystick = NULL;
   MoveCursorFn m_moveCursor = NULL;
   NextDataFn m_nextData = NULL;
   ResetDataFn m_resetData = NULL;
@@ -2728,6 +2754,40 @@ private:
 
       if (keyLen > 0) m_vars.setNum(keyVar, keyLen, (float)key);
       if (stLen > 0)  m_vars.setNum(stVar, stLen, (float)status);
+      return resp;
+    }
+
+    if (strcasecmp(subName, "JOYST") == 0)
+    {
+      // CALL JOYST(unit, X, Y) — unit is 1 (only one pad supported);
+      // X and Y get -4/0/+4 from the BLE gamepad's D-pad / hat or from
+      // the keyboard's arrow keys (whichever is active).
+      if (tokens[*pos] == TOK_LPAREN) (*pos)++;
+      int unit = (int)m_expr.evalNumeric(tokens, pos);
+      if (tokens[*pos] == TOK_COMMA) (*pos)++;
+
+      char xVar[MAX_VAR_NAME] = "";
+      int xLen = 0;
+      if (isIdentStart(tokens[*pos]))
+      {
+        bool vIsStr;
+        xLen = parseIdent(tokens, pos, xVar, sizeof(xVar), &vIsStr);
+      }
+      if (tokens[*pos] == TOK_COMMA) (*pos)++;
+
+      char yVar[MAX_VAR_NAME] = "";
+      int yLen = 0;
+      if (isIdentStart(tokens[*pos]))
+      {
+        bool vIsStr;
+        yLen = parseIdent(tokens, pos, yVar, sizeof(yVar), &vIsStr);
+      }
+      if (tokens[*pos] == TOK_RPAREN) (*pos)++;
+
+      int x = 0, y = 0;
+      if (m_readJoystick) m_readJoystick(unit, &x, &y);
+      if (xLen > 0) m_vars.setNum(xVar, xLen, (float)x);
+      if (yLen > 0) m_vars.setNum(yVar, yLen, (float)y);
       return resp;
     }
 
