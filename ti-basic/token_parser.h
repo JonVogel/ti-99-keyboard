@@ -2236,6 +2236,11 @@ private:
         }
         s.magnify = sprites::g_magnify;
         s.active  = true;
+        // Seed snapshot so a POSITION/COINC right after CALL SPRITE
+        // returns the just-set position instead of the default (1,1).
+        s.snapRow     = s.row;
+        s.snapCol     = s.col;
+        s.snapMagnify = s.magnify;
         if (m_spriteDraw) m_spriteDraw(n);
         if (tokens[*pos] == TOK_COMMA) (*pos)++;
       }
@@ -2294,8 +2299,10 @@ private:
         if (sprites::validSlot(n) && sprites::g_sprites[n].active)
         {
           if (m_spriteErase) m_spriteErase(n);
-          sprites::g_sprites[n].row = (int16_t)r;
-          sprites::g_sprites[n].col = (int16_t)c;
+          sprites::g_sprites[n].row     = (int16_t)r;
+          sprites::g_sprites[n].col     = (int16_t)c;
+          sprites::g_sprites[n].snapRow = (int16_t)r;
+          sprites::g_sprites[n].snapCol = (int16_t)c;
           if (m_spriteDraw) m_spriteDraw(n);
         }
         if (tokens[*pos] == TOK_COMMA) (*pos)++;
@@ -2354,12 +2361,15 @@ private:
         }
         if (sprites::validSlot(n) && sprites::g_sprites[n].active)
         {
+          // snapRow/snapCol = position at the end of the last
+          // spriteTick, so all queries within one BASIC iteration
+          // are coherent even if a tick fires between them.
           if (rlen > 0)
             m_vars.setNum(rname, rlen,
-                          (float)sprites::g_sprites[n].row);
+                          (float)sprites::g_sprites[n].snapRow);
           if (clen > 0)
             m_vars.setNum(cname, clen,
-                          (float)sprites::g_sprites[n].col);
+                          (float)sprites::g_sprites[n].snapCol);
         }
         if (tokens[*pos] == TOK_COMMA) (*pos)++;
       }
@@ -2379,8 +2389,8 @@ private:
       int r1 = 0, c1 = 0, valid1 = 0;
       if (sprites::validSlot(s1) && sprites::g_sprites[s1].active)
       {
-        r1 = sprites::g_sprites[s1].row;
-        c1 = sprites::g_sprites[s1].col;
+        r1 = sprites::g_sprites[s1].snapRow;
+        c1 = sprites::g_sprites[s1].snapCol;
         valid1 = 1;
       }
       // Second arg may be #spriteN or a row literal
@@ -2391,8 +2401,8 @@ private:
         int s2 = (int)m_expr.evalNumeric(tokens, pos);
         if (sprites::validSlot(s2) && sprites::g_sprites[s2].active)
         {
-          r2 = sprites::g_sprites[s2].row;
-          c2 = sprites::g_sprites[s2].col;
+          r2 = sprites::g_sprites[s2].snapRow;
+          c2 = sprites::g_sprites[s2].snapCol;
           valid2 = 1;
         }
         if (tokens[*pos] == TOK_COMMA) (*pos)++;
@@ -2452,12 +2462,12 @@ private:
           for (int b = a + 1; b <= sprites::MAX_SPRITES && !hit; b++)
           {
             if (!sprites::g_sprites[b].active) continue;
-            int sa = sprites::footprint(sprites::g_sprites[a].magnify);
-            int sb = sprites::footprint(sprites::g_sprites[b].magnify);
-            int ra = sprites::g_sprites[a].row;
-            int ca = sprites::g_sprites[a].col;
-            int rb = sprites::g_sprites[b].row;
-            int cb = sprites::g_sprites[b].col;
+            int sa = sprites::footprint(sprites::g_sprites[a].snapMagnify);
+            int sb = sprites::footprint(sprites::g_sprites[b].snapMagnify);
+            int ra = sprites::g_sprites[a].snapRow;
+            int ca = sprites::g_sprites[a].snapCol;
+            int rb = sprites::g_sprites[b].snapRow;
+            int cb = sprites::g_sprites[b].snapCol;
             if (ra < rb + sb && rb < ra + sa &&
                 ca < cb + sb && cb < ca + sa) hit = -1;
           }
@@ -2499,14 +2509,14 @@ private:
       int result = 0;
       if (sprites::validSlot(s1) && sprites::g_sprites[s1].active)
       {
-        int r1 = sprites::g_sprites[s1].row;
-        int c1 = sprites::g_sprites[s1].col;
+        int r1 = sprites::g_sprites[s1].snapRow;
+        int c1 = sprites::g_sprites[s1].snapCol;
         int rr, cc;
         if (spritePair && sprites::validSlot(s2) &&
             sprites::g_sprites[s2].active)
         {
-          rr = sprites::g_sprites[s2].row;
-          cc = sprites::g_sprites[s2].col;
+          rr = sprites::g_sprites[s2].snapRow;
+          cc = sprites::g_sprites[s2].snapCol;
         }
         else if (!spritePair)
         {

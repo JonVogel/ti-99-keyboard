@@ -165,7 +165,7 @@ Status legend:
 |----------------|:----:|:----:|--------------------------------------------|
 | CALL KEY       |  ✅  |  ✅  | Mode 0; other modes treated same           |
 | CALL VERSION   |  ✅  |  ✅  | Returns 110                                |
-| CALL JOYST     |      |      |                                            |
+| CALL JOYST     |  ✅  |      | Single-pad: unit 1 = BLE gamepad / arrow keys; unit 2 always centered |
 | CALL SOUND     |  ✅  |      | Stub: parses + honors duration (wait vs. immediate); no audio yet |
 | CALL SPEED     |  ✅  |  ✅  | Our addition: `CALL SPEED(usPerLine)` — 0=fast (default), 285≈XB, 666≈TI BASIC |
 | CALL DELAY     |  ✅  |  ✅  | Our addition: `CALL DELAY(ms)` — block for ms milliseconds (animation pacing) |

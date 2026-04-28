@@ -20,6 +20,8 @@
 #include "esp_lcd_panel_rgb.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp32s3/rom/cache.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 class Arduino_ESP32RGBPanelDB
 {

@@ -44,8 +44,8 @@ namespace sprites
     bool    active      = false;
     uint8_t charCode    = 0;      // base pattern (32..143)
     uint8_t colorIdx    = 16;     // palette index (1..16)
-    int16_t row         = 1;      // TI-pixel row, top edge (1-based, 1..192)
-    int16_t col         = 1;      // TI-pixel col, left edge (1-based, 1..256)
+    int16_t row         = 1;      // live TI-pixel row, top edge (1-based)
+    int16_t col         = 1;      // live TI-pixel col, left edge (1-based)
     int16_t rowVel      = 0;      // velocity, -128..127
     int16_t colVel      = 0;
     uint8_t magnify     = MAG_1;  // global in real TI; per-sprite here for now
@@ -53,6 +53,15 @@ namespace sprites
     // motion. Effective pixel motion = vel / 8 per 1/60 s frame.
     int32_t subRow      = 0;
     int32_t subCol      = 0;
+    // Snapshot captured at the end of each spriteTick (the virtual
+    // vsync). CALL POSITION / COINC / DISTANCE all read from these
+    // instead of the live row/col so a single BASIC iteration sees
+    // a coherent frame: positions queried at line 60 and used on
+    // line 130 won't have shifted underfoot if a tick fired in the
+    // middle.
+    int16_t snapRow     = 1;
+    int16_t snapCol     = 1;
+    uint8_t snapMagnify = MAG_1;
   };
 
   inline Sprite g_sprites[MAX_SPRITES + 1];    // 1..MAX_SPRITES

@@ -42,7 +42,9 @@
 #define SCREEN_H   480
 
 #define DISPLAY_X_OFFSET ((SCREEN_W - COLS * CHAR_W) / 2)   // 144
-#define DISPLAY_Y_OFFSET ((SCREEN_H - ROWS * CHAR_H) / 2)   // 48
+// 8-px upward nudge from the math-centered position (was 48) to better
+// center the TI grid on the physical 8048S043C with rotation 2.
+#define DISPLAY_Y_OFFSET (((SCREEN_H - ROWS * CHAR_H) / 2) - 8)   // 40
 
 // TI-style screen-color border is a thin 8-pixel frame around the grid.
 // Everything outside that frame (except the status line) is black.
@@ -1194,10 +1196,16 @@ static void spriteTick()
 
     int16_t nr = s.row + dr;
     int16_t nc = s.col + dc;
-    // No wraparound — TI-faithful. Sprites past the screen edge are
-    // simply off-screen (the renderer clips per-pixel) and CALL
-    // POSITION returns the actual stored row/col so BASIC bounce
-    // checks like `IF R>176 THEN ...` fire correctly.
+    // TI VDP sprite registers are 8-bit and naturally wrap at 256.
+    // pico9918 confirms this: real hardware has no clipping or
+    // clamping, just register overflow. We mirror that. BASIC
+    // programs that want sprites to bounce off screen edges are
+    // responsible for the bounds check themselves — same contract
+    // as on real TI.
+    while (nr < 1)   nr += 256;
+    while (nr > 256) nr -= 256;
+    while (nc < 1)   nc += 256;
+    while (nc > 256) nc -= 256;
 
     if (nr != prevRow || nc != prevCol)
     {
@@ -1214,6 +1222,21 @@ static void spriteTick()
       anyMoved = true;
     }
   }
+
+  // Snapshot every active sprite's position so BASIC sees a coherent
+  // frame. POSITION / COINC / DISTANCE read snapRow/snapCol; physics
+  // updates row/col live each tick. This is the "virtual vsync":
+  // queries within one BASIC iteration always reflect the same
+  // moment in time, even if a tick fires mid-iteration.
+  for (int i = 1; i <= sprites::MAX_SPRITES; i++)
+  {
+    sprites::Sprite& s = sprites::g_sprites[i];
+    if (!s.active) continue;
+    s.snapRow     = s.row;
+    s.snapCol     = s.col;
+    s.snapMagnify = s.magnify;
+  }
+
   // Commit the back buffer to the panel — swap takes effect at next
   // vsync, so the user sees the complete frame all at once instead
   // of a half-updated one. Skip if nothing moved (commit costs a
@@ -1493,7 +1516,8 @@ static void fillBackground(uint16_t bg)
   bgColor = savedBg;
   tft->fillRect(DISPLAY_X_OFFSET, DISPLAY_Y_OFFSET,
                 COLS * CHAR_W, ROWS * CHAR_H, bg);
-  tft->fillRect(0, STATUS_Y, SCREEN_W, STATUS_H, 0x18E3);
+  // Status strip disabled while diagnosing post-rotation garbage —
+  // see showStatus().
 }
 
 // TI-Texas logo — 3×3 character grid taken straight from the TI title
@@ -1695,8 +1719,12 @@ static void drawStatusText(int x, int y, const char* s,
 
 static void showStatus(const char* msg)
 {
-  tft->fillRect(0, STATUS_Y, SCREEN_W, STATUS_H, 0x18E3);
-  drawStatusText(DISPLAY_X_OFFSET, STATUS_Y + 8, msg, 0xFFFF, 0x18E3);
+  // Temporarily disabled while diagnosing the post-rotation status-bar
+  // garbage. The bar lives at logical y=STATUS_Y (=456), which after
+  // rotation 2 lands in the FB rows panel scans first — possibly
+  // colliding with the back-buffer pre-fill memcpy. Removing it lets
+  // us isolate whether the disruption was status-bar specific.
+  (void)msg;
 }
 
 // ---------------------------------------------------------------------------

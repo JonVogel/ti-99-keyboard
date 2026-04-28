@@ -59,6 +59,7 @@ goto end
 
 :upload
 echo.
+call :killmonitor
 echo === Uploading to !PORT! ===
 arduino-cli upload -p !PORT! --fqbn !FQBN! "!SKETCH_DIR!"
 goto end
@@ -69,6 +70,7 @@ echo === Compiling ===
 arduino-cli compile --fqbn !FQBN! --libraries "!SKETCH_DIR!\.." "!SKETCH_DIR!"
 if errorlevel 1 goto end
 echo.
+call :killmonitor
 echo === Uploading to !PORT! ===
 arduino-cli upload -p !PORT! --fqbn !FQBN! "!SKETCH_DIR!"
 goto end
@@ -85,6 +87,7 @@ echo === Compiling ===
 arduino-cli compile --fqbn !FQBN! --libraries "!SKETCH_DIR!\.." "!SKETCH_DIR!"
 if errorlevel 1 goto end
 echo.
+call :killmonitor
 echo === Uploading to !PORT! ===
 arduino-cli upload -p !PORT! --fqbn !FQBN! "!SKETCH_DIR!"
 if errorlevel 1 goto end
@@ -92,6 +95,22 @@ echo.
 echo === Monitoring !PORT! (Ctrl+C to exit) ===
 arduino-cli monitor -p !PORT! --config baudrate=115200
 goto end
+
+REM Kill any lingering arduino-cli monitor process so the COM port is
+REM free for the upload step. Without this, an open `build.bat monitor`
+REM (or any other arduino-cli serial monitor) holds the port and the
+REM upload fails with "Access is denied". By the time we call this
+REM helper, the compile step has already finished, so any remaining
+REM arduino-cli.exe is a stale monitor — safe to terminate.
+:killmonitor
+tasklist /FI "IMAGENAME eq arduino-cli.exe" 2>nul | find /I "arduino-cli.exe" >nul
+if not errorlevel 1 (
+  echo Closing serial monitor on !PORT!...
+  taskkill /F /IM arduino-cli.exe >nul 2>&1
+  REM Brief settle so the OS releases the COM handle before upload
+  timeout /t 1 /nobreak >nul 2>&1
+)
+exit /b 0
 
 :end
 endlocal
