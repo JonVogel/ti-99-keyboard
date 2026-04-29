@@ -1293,12 +1293,14 @@ static void printString(const char* str)
   {
     printChar(*str++);
   }
+  tft->flush();  
 }
 
 static void printLine(const char* str)
 {
   printString(str);
   printChar('\n');
+  tft->flush();
 }
 
 // TI-style error print: blank line, error message, blank line, plus a
@@ -1308,7 +1310,6 @@ static void printError(const char* str)
   printLine("");
   printLine(str);
   printLine("");
-  Serial.write(0x07);
 }
 
 static void clearScreen()
@@ -3085,7 +3086,7 @@ static void catPrintLine(const char* s)
   g_catLines++;
   if (g_catLines >= 23)
   {
-    printLine("-- PRESS ANY KEY (ESC TO STOP) --");
+    printLine("* PRESS ANY KEY TO CONTINUE *");
     int c = -1;
     while (c < 0)
     {
