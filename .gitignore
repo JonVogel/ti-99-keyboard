@@ -4,3 +4,12 @@ build/
 *.bin
 *.elf
 *.map
+_royalaxe_mac_extract/
+
+# KiCad auto-generated working files
+pcb/.history/
+pcb/ti99-kb-adapter-backups/
+*.kicad_pcb.lck
+*.kicad_pro.lck
+*.kicad_sch.lck
+~*
