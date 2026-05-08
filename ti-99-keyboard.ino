@@ -52,8 +52,35 @@
 // ---------------------------------------------------------------------------
 // Input Mode Selection — uncomment one or both
 // ---------------------------------------------------------------------------
-#define INPUT_USB
+// #define INPUT_USB  // TEMP: disabled while EspUsbHost API is being rewritten upstream
 #define INPUT_BLE
+
+// ---------------------------------------------------------------------------
+// Type-ahead Buffer
+// ---------------------------------------------------------------------------
+// The original TI-99/4A has no keyboard buffer — keys typed faster than the
+// console's matrix scan get dropped. The IBM PC's BIOS solved this with a
+// 16-key type-ahead buffer that captured keystrokes at interrupt time and
+// fed them to the console at scan rate. The same trick is implemented here:
+// HID key-down events get queued (with their modifiers snapshotted at press
+// time), then a replay state machine holds each one on the TI matrix long
+// enough for the ROM to definitely see it before serving the next.
+//
+// The buffer breaks games that depend on "is this key DOWN right now?"
+// (Parsec hold-to-fire, TI Invaders movement, etc.) — held keys turn into
+// 40ms pulses, multi-key chords get serialized. So the buffer is OFF by
+// default and the user toggles it on/off at runtime with F11. Compile-flag
+// gates the whole feature in case the runtime path proves problematic on
+// real hardware.
+#define ENABLE_TYPE_AHEAD_BUFFER
+
+// Tunables. HOLD_MS must cover at least 2 TI keyboard scan cycles so the
+// ROM is guaranteed to sample the matrix while the key is asserted.
+// GAP_MS gives the ROM a chance to see the release between consecutive
+// presses of the same key (otherwise back-to-back AAA looks like one A).
+#define TYPE_AHEAD_DEPTH    16
+#define TYPE_AHEAD_HOLD_MS  40
+#define TYPE_AHEAD_GAP_MS   10
 
 #ifdef INPUT_USB
 #include <EspUsbHost.h>
@@ -376,6 +403,124 @@ static const SpecialKeyMapping specialKeys[] =
 #define NUM_SPECIAL_KEYS (sizeof(specialKeys) / sizeof(specialKeys[0]))
 
 // ---------------------------------------------------------------------------
+// Single-key matrix builder
+// ---------------------------------------------------------------------------
+// Given one HID key + its captured modifiers + alpha-lock state, write the
+// resulting 6-byte TI column matrix into out[]. Used by both the immediate
+// pass-through path (which calls it once per key in the report) and the
+// type-ahead replay state machine (which calls it on the head of the
+// queue). Returns true if the key produced any matrix activity.
+static bool buildTiMatrixForKey(uint8_t hidKey,
+                                uint8_t modifiers,
+                                bool alphaLockOn,
+                                uint8_t out[6])
+{
+  memset(out, 0, 6);
+
+  // Modifier passthrough
+  if (modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT))
+  {
+    out[TI_SHIFT_COL] |= TI_SHIFT_ROW;
+  }
+  if (modifiers & (HID_MOD_LCTRL | HID_MOD_RCTRL))
+  {
+    out[TI_CTRL_COL] |= TI_CTRL_ROW;
+  }
+  if (modifiers & (HID_MOD_LALT | HID_MOD_RALT))
+  {
+    out[TI_FCTN_COL] |= TI_FCTN_ROW;
+  }
+
+  if (hidKey == 0)
+  {
+    return out[0] || out[1] || out[2] || out[3] || out[4] || out[5];
+  }
+
+  // Special key (FCTN/SHIFT + something) lookup first
+  for (int s = 0; s < NUM_SPECIAL_KEYS; s++)
+  {
+    if (specialKeys[s].hidKey == hidKey)
+    {
+      out[specialKeys[s].tiCol] |= specialKeys[s].tiRow;
+      if (specialKeys[s].needFctn)
+      {
+        out[TI_FCTN_COL] |= TI_FCTN_ROW;
+      }
+      if (specialKeys[s].needShift)
+      {
+        out[TI_SHIFT_COL] |= TI_SHIFT_ROW;
+      }
+      return true;
+    }
+  }
+
+  // Standard key lookup
+  if (hidKey < MAP_SIZE && hidToTi[hidKey].col != 0xFF)
+  {
+    out[hidToTi[hidKey].col] |= hidToTi[hidKey].row;
+
+    // Software Alpha Lock: force SHIFT on letters when caps lock is on.
+    if (alphaLockOn && hidKey >= HID_KEY_A && hidKey <= HID_KEY_Z)
+    {
+      out[TI_SHIFT_COL] |= TI_SHIFT_ROW;
+    }
+    return true;
+  }
+
+  return out[0] || out[1] || out[2] || out[3] || out[4] || out[5];
+}
+
+// ---------------------------------------------------------------------------
+// Type-ahead Buffer (PC-style 16-deep ring, F11 to toggle at runtime)
+// ---------------------------------------------------------------------------
+#ifdef ENABLE_TYPE_AHEAD_BUFFER
+
+struct TypeAheadEvent
+{
+  uint8_t hidKey;     // HID scancode
+  uint8_t modifiers;  // snapshot of modifier byte at press time
+  bool    alphaLock;  // snapshot of alpha-lock state at press time
+};
+
+static TypeAheadEvent taBuf[TYPE_AHEAD_DEPTH];
+static volatile int   taHead = 0;   // write index
+static volatile int   taTail = 0;   // read index
+static bool           taEnabled = false;
+static unsigned long  taPhaseEndsAt = 0;
+static bool           taHolding = false;  // true = key on matrix, false = inter-key gap
+
+static inline int taCount()
+{
+  int n = taHead - taTail;
+  if (n < 0) n += TYPE_AHEAD_DEPTH;
+  return n;
+}
+
+static inline bool taPush(uint8_t hidKey, uint8_t modifiers, bool alphaLock)
+{
+  int next = (taHead + 1) % TYPE_AHEAD_DEPTH;
+  if (next == taTail)
+  {
+    return false;  // full — drop the keystroke (PC BIOS beeps; we just drop)
+  }
+  taBuf[taHead].hidKey    = hidKey;
+  taBuf[taHead].modifiers = modifiers;
+  taBuf[taHead].alphaLock = alphaLock;
+  taHead = next;
+  return true;
+}
+
+static void taFlush()
+{
+  taHead = taTail = 0;
+  taHolding = false;
+  taPhaseEndsAt = 0;
+  memset((void *)keyState, 0, sizeof(keyState));
+}
+
+#endif // ENABLE_TYPE_AHEAD_BUFFER
+
+// ---------------------------------------------------------------------------
 // Shared HID Report Processing
 // ---------------------------------------------------------------------------
 static uint8_t prevKeys[6] = {0};
@@ -453,6 +598,16 @@ static const char *hidKeyToDebugChar(uint8_t k, bool shift)
   return "?";
 }
 
+// Helper: was this HID code present in the previous report?
+static inline bool keyWasPressed(uint8_t k)
+{
+  for (int j = 0; j < 6; j++)
+  {
+    if (prevKeys[j] == k) return true;
+  }
+  return false;
+}
+
 void processHidReport(const uint8_t *report, size_t len)
 {
   if (len < 8)
@@ -468,103 +623,95 @@ void processHidReport(const uint8_t *report, size_t len)
   // Flag is consumed on the main loop; calling BLE stack functions from a
   // notify callback context is unsafe.
   bool f12Now = false;
-  bool f12Prev = false;
   for (int i = 0; i < 6; i++)
   {
-    if (keys[i] == HID_KEY_F12) f12Now = true;
-    if (prevKeys[i] == HID_KEY_F12) f12Prev = true;
+    if (keys[i] == HID_KEY_F12) { f12Now = true; break; }
   }
-  if (f12Now && !f12Prev)
+  if (f12Now && !keyWasPressed(HID_KEY_F12))
   {
     BleHidHost::requestPairingMode();
   }
 #endif
 
-  // Clear all key state and rebuild from current report
+#ifdef ENABLE_TYPE_AHEAD_BUFFER
+  // F11 → toggle type-ahead buffer at runtime. Edge-triggered, never
+  // forwarded to TI. Flushes the queue + matrix on either transition so
+  // a leftover queued key can't bleed into game mode.
+  bool f11Now = false;
+  for (int i = 0; i < 6; i++)
+  {
+    if (keys[i] == HID_KEY_F11) { f11Now = true; break; }
+  }
+  if (f11Now && !keyWasPressed(HID_KEY_F11))
+  {
+    taEnabled = !taEnabled;
+    taFlush();
+    Serial.printf("Type-ahead buffer: %s\n", taEnabled ? "ON" : "OFF");
+  }
+#endif
+
+  // Caps Lock toggle (edge-triggered, never reaches the TI matrix)
+  bool capsNow = false;
+  for (int i = 0; i < 6; i++)
+  {
+    if (keys[i] == HID_KEY_CAPSLOCK) { capsNow = true; break; }
+  }
+  if (capsNow && !keyWasPressed(HID_KEY_CAPSLOCK))
+  {
+    alphaLockActive = !alphaLockActive;
+  }
+
+#ifdef ENABLE_TYPE_AHEAD_BUFFER
+  if (taEnabled)
+  {
+    // Buffered path: every new key-down edge becomes a queued event with
+    // its modifiers + alpha-lock state captured at press time. Releases
+    // and meta-keys (F11/F12/Caps) are NOT enqueued — they were handled
+    // above. The replay state machine (processTypeAheadBuffer) drives
+    // keyState[] from the queue.
+    for (int i = 0; i < 6; i++)
+    {
+      uint8_t k = keys[i];
+      if (k == 0) continue;
+      if (k == HID_KEY_F11 || k == HID_KEY_F12 || k == HID_KEY_CAPSLOCK) continue;
+      if (keyWasPressed(k)) continue;  // already in flight from a prior report
+      taPush(k, modifiers, alphaLockActive);
+    }
+    memcpy(prevKeys, keys, 6);
+    return;
+  }
+#endif
+
+  // Pass-through path (no buffer): rebuild keyState from the current
+  // report on every report. This is the original game-friendly behavior
+  // — "is this key DOWN right now?" is faithfully reflected in the matrix.
   memset((void *)keyState, 0, sizeof(keyState));
 
-  // Modifier keys
-  if (modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT))
-  {
-    keyState[TI_SHIFT_COL] |= TI_SHIFT_ROW;
-  }
-  if (modifiers & (HID_MOD_LCTRL | HID_MOD_RCTRL))
-  {
-    keyState[TI_CTRL_COL] |= TI_CTRL_ROW;
-  }
-  if (modifiers & (HID_MOD_LALT | HID_MOD_RALT))
-  {
-    keyState[TI_FCTN_COL] |= TI_FCTN_ROW;
-  }
-
-  // Process each pressed key
   for (int i = 0; i < 6; i++)
   {
     uint8_t k = keys[i];
-    if (k == 0)
+    if (k == 0 || k == HID_KEY_CAPSLOCK || k == HID_KEY_F11 || k == HID_KEY_F12)
     {
       continue;
     }
 
-    // Check special keys first
-    bool handled = false;
-    for (int s = 0; s < NUM_SPECIAL_KEYS; s++)
+    uint8_t perKey[6];
+    if (buildTiMatrixForKey(k, modifiers, alphaLockActive, perKey))
     {
-      if (specialKeys[s].hidKey == k)
+      for (int c = 0; c < 6; c++)
       {
-        keyState[specialKeys[s].tiCol] |= specialKeys[s].tiRow;
-        if (specialKeys[s].needFctn)
-        {
-          keyState[TI_FCTN_COL] |= TI_FCTN_ROW;
-        }
-        if (specialKeys[s].needShift)
-        {
-          keyState[TI_SHIFT_COL] |= TI_SHIFT_ROW;
-        }
-        handled = true;
-        break;
+        keyState[c] |= perKey[c];
       }
     }
-    if (handled)
-    {
-      continue;
-    }
+  }
 
-    // Caps Lock toggle (edge-triggered)
-    if (k == HID_KEY_CAPSLOCK)
-    {
-      bool wasPressed = false;
-      for (int j = 0; j < 6; j++)
-      {
-        if (prevKeys[j] == HID_KEY_CAPSLOCK)
-        {
-          wasPressed = true;
-          break;
-        }
-      }
-      if (!wasPressed)
-      {
-        alphaLockActive = !alphaLockActive;
-      }
-      continue;
-    }
-
-    // Standard key lookup
-    if (k < MAP_SIZE && hidToTi[k].col != 0xFF)
-    {
-      keyState[hidToTi[k].col] |= hidToTi[k].row;
-
-      // Software Alpha Lock: force SHIFT on letters when caps lock is on.
-      // We never drive the dedicated Alpha Lock line — that line shares
-      // the joystick UP signal on the original TI, and asserting it
-      // permanently breaks joystick reads. By emulating Alpha Lock as
-      // "letters get shifted," we get capital letters without ever
-      // touching PIN_ALPHA_LOCK, so joysticks keep working.
-      if (alphaLockActive && k >= HID_KEY_A && k <= HID_KEY_Z)
-      {
-        keyState[TI_SHIFT_COL] |= TI_SHIFT_ROW;
-      }
-    }
+  // Even if no real keys are down, modifiers alone should still be
+  // reflected (so the user can hold SHIFT before pressing a letter).
+  uint8_t modOnly[6];
+  buildTiMatrixForKey(0, modifiers, alphaLockActive, modOnly);
+  for (int c = 0; c < 6; c++)
+  {
+    keyState[c] |= modOnly[c];
   }
 
   // LED feedback
@@ -705,19 +852,126 @@ static void bleTask()
 {
   BleHidHost::task();
   bleUpdateLedAndState();
+
+  // Auto-rescan watchdog. The L75 (and similar BLE keyboards) re-advertise
+  // only briefly when waking from deep sleep, with haveUUID=0 and no name
+  // in the primary packet — so a saved-address scan window can miss them.
+  // If we're disconnected and not already in pairing mode for >5 s, kick
+  // the host into pairing mode, which uses the name-fallback path and
+  // catches the next advertising burst without needing F12 or a reboot.
+  static uint32_t disconnectAt = 0;
+  if (BleHidHost::isConnected() || BleHidHost::inPairingMode())
+  {
+    disconnectAt = 0;
+  }
+  else if (disconnectAt == 0)
+  {
+    disconnectAt = millis();
+  }
+  else if (millis() - disconnectAt > 5000)
+  {
+    BleHidHost::requestPairingMode();
+    disconnectAt = 0;
+  }
 }
 
 #endif // INPUT_BLE
 
 // ---------------------------------------------------------------------------
+// Type-ahead Buffer Replay
+// ---------------------------------------------------------------------------
+#ifdef ENABLE_TYPE_AHEAD_BUFFER
+
+// Drive keyState[] from the head of the type-ahead queue. Two phases per
+// queued event: HOLD (key + modifiers asserted on the matrix for HOLD_MS)
+// then GAP (matrix cleared for GAP_MS so the ROM sees a clean release).
+// When the queue is empty and we're not mid-hold, keyState stays zero so
+// any held physical key from a stale prevKeys snapshot doesn't leak through.
+static void processTypeAheadBuffer()
+{
+  if (!taEnabled) return;
+
+  unsigned long now = millis();
+
+  // Idle: nothing to do.
+  if (!taHolding && taPhaseEndsAt == 0 && taCount() == 0)
+  {
+    return;
+  }
+
+  // GAP phase finished — advance the queue and start the next HOLD, or go
+  // idle if the queue is empty.
+  if (!taHolding && taPhaseEndsAt != 0 && (long)(now - taPhaseEndsAt) >= 0)
+  {
+    taPhaseEndsAt = 0;
+    if (taCount() == 0)
+    {
+      memset((void *)keyState, 0, sizeof(keyState));
+      return;
+    }
+  }
+
+  // HOLD phase finished — clear the matrix and start the GAP.
+  if (taHolding && (long)(now - taPhaseEndsAt) >= 0)
+  {
+    memset((void *)keyState, 0, sizeof(keyState));
+    taTail = (taTail + 1) % TYPE_AHEAD_DEPTH;
+    taHolding = false;
+    taPhaseEndsAt = now + TYPE_AHEAD_GAP_MS;
+    return;
+  }
+
+  // Start a new HOLD phase from the head of the queue.
+  if (!taHolding && taCount() > 0 && taPhaseEndsAt == 0)
+  {
+    const TypeAheadEvent& ev = taBuf[taTail];
+    uint8_t built[6];
+    buildTiMatrixForKey(ev.hidKey, ev.modifiers, ev.alphaLock, built);
+    memcpy((void *)keyState, built, 6);
+    taHolding = true;
+    taPhaseEndsAt = now + TYPE_AHEAD_HOLD_MS;
+    keypressTime = now;  // light up keypress LED feedback
+  }
+}
+
+#endif // ENABLE_TYPE_AHEAD_BUFFER
+
+// ---------------------------------------------------------------------------
 // TI-99/4A Matrix Output
 // ---------------------------------------------------------------------------
+
+// COL_SETTLE_US debounces strobe detection. The TI strobes one column LOW
+// at a time, but adjacent strobe edges capacitively couple transient drops
+// onto neighboring (idle) columns — measured at ~10us duration on the
+// rev 2 PCB with unshielded jumpers. The original TI ROM avoids confusion
+// by sampling rows ~20-50us AFTER asserting the column (waiting for the
+// line to settle); we mimic that discipline here so a transient spike
+// doesn't get latched as a real strobe.
+//
+// Settle window must be > observed transient duration (so the second read
+// catches the line back at HIGH after the blip has decayed) but well under
+// the TI's row-sample timing (~20-50us after strobe) so our row outputs
+// are valid when the ROM samples. 30us splits that window with margin on
+// both sides. Real TI strobes hold LOW for hundreds of us so they survive
+// both reads cleanly.
+#define COL_SETTLE_US 30
+
+static inline bool colIsAsserted(int c)
+{
+  if (digitalRead(colPins[c]) != LOW)
+  {
+    return false;
+  }
+  delayMicroseconds(COL_SETTLE_US);
+  return digitalRead(colPins[c]) == LOW;
+}
+
 static inline void updateRowOutputs()
 {
   int activeCol = -1;
   for (int c = 0; c < 6; c++)
   {
-    if (digitalRead(colPins[c]) == LOW)
+    if (colIsAsserted(c))
     {
       activeCol = c;
       break;
@@ -751,6 +1005,236 @@ static inline void updateRowOutputs()
   // PIN_ALPHA_LOCK is intentionally never driven. See processHidReport
   // for the software Alpha Lock implementation. Driving the original
   // Alpha Lock line breaks joystick UP on unmodified TI-99/4A consoles.
+}
+
+// ---------------------------------------------------------------------------
+// Strobe Observation Mode (passive scope-in-firmware)
+// ---------------------------------------------------------------------------
+// Captures every column-line edge from a real TI with microsecond
+// timestamps and dumps them over serial. Used to derive: scan period,
+// strobe duration, scan order, transient frequency/duration. Doesn't drive
+// the rows while active so our own output doesn't perturb what we're
+// observing.
+//
+// Usage:
+//   observe   - start capturing (rows held INPUT, all column edges logged)
+//   off       - stop and return to normal matrix output
+//
+// Output format (one line per edge):
+//   STROBE  t=<us-from-start>  col=<idx> (<TI signal>)  <FALL|RISE>
+//                                                       [dur=<us>]   ; on RISE
+//
+// Implementation: ISR records {micros, col, level} into a lock-free ring
+// buffer. Main loop drains and printf's. Never call Serial from an ISR.
+
+#define STROBE_LOG_DEPTH 256   // ring entries; keep power-of-2 for cheap mod
+
+struct StrobeEvent
+{
+  uint32_t timeUs;
+  uint8_t  col;
+  uint8_t  level;   // 0 = FALL, 1 = RISE
+};
+
+static volatile StrobeEvent strobeLog[STROBE_LOG_DEPTH];
+static volatile uint32_t    strobeLogHead = 0;   // ISR writes
+static volatile uint32_t    strobeLogTail = 0;   // main loop reads
+static volatile uint32_t    strobeLogDropped = 0;
+
+// Per-column ISR fire counter — atomic-ish (single-writer, single-reader).
+static volatile uint32_t colIsrCount[6] = {0};
+// Per-column last known level. ISR updates from GPIO read on each edge.
+// A FALL is recorded when this transitions HIGH→LOW; a RISE is recorded
+// when this transitions LOW→HIGH. More robust than relying on the
+// post-edge digitalRead matching the actual edge polarity.
+static volatile uint8_t colLastLevel[6] = {1, 1, 1, 1, 1, 1};
+
+static bool   strobeObserveMode = false;
+static uint32_t strobeObserveStartUs = 0;
+static uint32_t strobeHeartbeatLastMs = 0;
+// Track last FALL time per column so RISE prints "dur=NNus" inline.
+static uint32_t colLastFallUs[6] = {0};
+
+static const char *colName(int c)
+{
+  static const char *names[6] = { "1Y1", "2Y1", "2Y2", "2Y3", "1Y0", "2Y0" };
+  return (c >= 0 && c < 6) ? names[c] : "?";
+}
+
+static void IRAM_ATTR strobeEdgeIsr(void *arg)
+{
+  int c = (int)(intptr_t)arg;
+  colIsrCount[c]++;
+
+  // Read post-edge level. For very fast pulses the line may already have
+  // returned by the time the ISR runs (a few us latency on ESP32-S3),
+  // so we cross-check against the last known level: if the read says HIGH
+  // and we previously saw HIGH, the edge was a brief LOW pulse — we still
+  // want to log both edges. Same for the symmetric case.
+  uint8_t lvl = (uint8_t)(digitalRead(colPins[c]) == HIGH ? 1 : 0);
+
+  if (lvl == colLastLevel[c])
+  {
+    // The line transitioned and came back before our ISR could catch it.
+    // Log both edges so the analysis sees a non-zero pulse. Use micros()
+    // for both to keep them adjacent in the timeline.
+    uint32_t t = micros();
+    for (int k = 0; k < 2; k++)
+    {
+      uint32_t next = (strobeLogHead + 1) & (STROBE_LOG_DEPTH - 1);
+      if (next == strobeLogTail)
+      {
+        strobeLogDropped++;
+        return;
+      }
+      strobeLog[strobeLogHead].timeUs = t;
+      strobeLog[strobeLogHead].col    = (uint8_t)c;
+      // First entry = opposite of current level (the missed edge),
+      // second entry = current level (the recovery edge).
+      strobeLog[strobeLogHead].level  = (k == 0) ? (uint8_t)(1 - lvl) : lvl;
+      strobeLogHead = next;
+    }
+    return;
+  }
+
+  // Normal case: a single edge was caught.
+  colLastLevel[c] = lvl;
+
+  uint32_t next = (strobeLogHead + 1) & (STROBE_LOG_DEPTH - 1);
+  if (next == strobeLogTail)
+  {
+    strobeLogDropped++;
+    return;
+  }
+  strobeLog[strobeLogHead].timeUs = micros();
+  strobeLog[strobeLogHead].col    = (uint8_t)c;
+  strobeLog[strobeLogHead].level  = lvl;
+  strobeLogHead = next;
+}
+
+static void strobeObserveStart()
+{
+  // Release any rows we may have been driving so we don't perturb the TI.
+  for (int r = 0; r < 8; r++)
+  {
+    pinMode(rowPins[r], INPUT);
+  }
+
+  strobeLogHead    = 0;
+  strobeLogTail    = 0;
+  strobeLogDropped = 0;
+  strobeObserveStartUs = micros();
+  strobeHeartbeatLastMs = millis();
+  for (int c = 0; c < 6; c++)
+  {
+    colLastFallUs[c] = 0;
+    colIsrCount[c]   = 0;
+    // Initialize last-level from a fresh read so we don't start with a
+    // mismatched assumption.
+    colLastLevel[c]  = (uint8_t)(digitalRead(colPins[c]) == HIGH ? 1 : 0);
+  }
+
+  // Detach first in case there's a stale interrupt from a previous run.
+  for (int c = 0; c < 6; c++)
+  {
+    detachInterrupt(digitalPinToInterrupt(colPins[c]));
+  }
+  for (int c = 0; c < 6; c++)
+  {
+    attachInterruptArg(digitalPinToInterrupt(colPins[c]),
+                       strobeEdgeIsr,
+                       (void *)(intptr_t)c,
+                       CHANGE);
+  }
+
+  strobeObserveMode = true;
+  Serial.println("OBSERVE: capturing column edges. Type 'off' to stop.");
+  Serial.println("OBSERVE: initial column levels:");
+  for (int c = 0; c < 6; c++)
+  {
+    Serial.printf("  col=%d (%s) GPIO=%d level=%s\n",
+                  c, colName(c), colPins[c],
+                  colLastLevel[c] ? "HIGH" : "LOW");
+  }
+}
+
+static void strobeObserveStop()
+{
+  strobeObserveMode = false;
+  for (int c = 0; c < 6; c++)
+  {
+    detachInterrupt(digitalPinToInterrupt(colPins[c]));
+  }
+  Serial.printf("OBSERVE: stopped. (Ring buffer drops: %u)\n",
+                (unsigned)strobeLogDropped);
+}
+
+// Drain the ring buffer to serial. Called from main loop. Prints up to
+// `maxPerCall` events per invocation so we never block loop() for long.
+static void strobeObserveDrain()
+{
+  if (!strobeObserveMode)
+  {
+    return;
+  }
+
+  // Heartbeat: once per second, print per-column ISR fire counts and
+  // current GPIO levels. Confirms the ISR pipeline is alive even if
+  // there are no logged events (which would mean the line is moving
+  // too fast for the ISR to catch, or it's not moving at all).
+  uint32_t nowMs = millis();
+  if (nowMs - strobeHeartbeatLastMs >= 1000)
+  {
+    strobeHeartbeatLastMs = nowMs;
+    Serial.printf("OBSERVE-HB: ISRs c0=%u c1=%u c2=%u c3=%u c4=%u c5=%u  "
+                  "lvls=%d%d%d%d%d%d  drops=%u\n",
+                  (unsigned)colIsrCount[0], (unsigned)colIsrCount[1],
+                  (unsigned)colIsrCount[2], (unsigned)colIsrCount[3],
+                  (unsigned)colIsrCount[4], (unsigned)colIsrCount[5],
+                  digitalRead(colPins[0]), digitalRead(colPins[1]),
+                  digitalRead(colPins[2]), digitalRead(colPins[3]),
+                  digitalRead(colPins[4]), digitalRead(colPins[5]),
+                  (unsigned)strobeLogDropped);
+  }
+
+  const int maxPerCall = 32;
+  for (int i = 0; i < maxPerCall; i++)
+  {
+    if (strobeLogTail == strobeLogHead)
+    {
+      return;
+    }
+    StrobeEvent ev;
+    ev.timeUs = strobeLog[strobeLogTail].timeUs;
+    ev.col    = strobeLog[strobeLogTail].col;
+    ev.level  = strobeLog[strobeLogTail].level;
+    strobeLogTail = (strobeLogTail + 1) & (STROBE_LOG_DEPTH - 1);
+
+    uint32_t rel = ev.timeUs - strobeObserveStartUs;
+
+    if (ev.level == 0)   // FALL
+    {
+      colLastFallUs[ev.col] = ev.timeUs;
+      Serial.printf("STROBE  t=%9u  col=%u (%s)  FALL\n",
+                    (unsigned)rel, ev.col, colName(ev.col));
+    }
+    else                  // RISE
+    {
+      uint32_t dur = colLastFallUs[ev.col]
+                     ? (ev.timeUs - colLastFallUs[ev.col])
+                     : 0;
+      if (dur)
+      {
+        Serial.printf("STROBE  t=%9u  col=%u (%s)  RISE  dur=%uus\n",
+                      (unsigned)rel, ev.col, colName(ev.col), (unsigned)dur);
+      }
+      else
+      {
+        Serial.printf("STROBE  t=%9u  col=%u (%s)  RISE\n",
+                      (unsigned)rel, ev.col, colName(ev.col));
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -871,7 +1355,7 @@ void processSerialDebug()
     return;
   }
 
-  // Release all pins and exit debug/cycle mode
+  // Release all pins and exit debug/cycle/observe mode
   if (input.equalsIgnoreCase("off") || input.equalsIgnoreCase("reset"))
   {
     for (int i = 0; i < 15; i++)
@@ -883,6 +1367,10 @@ void processSerialDebug()
     }
     debugMode = false;
     cycleMode = false;
+    if (strobeObserveMode)
+    {
+      strobeObserveStop();
+    }
     Serial.println("DEBUG: All pins released. Normal mode.");
     return;
   }
@@ -898,12 +1386,22 @@ void processSerialDebug()
     return;
   }
 
+  // Strobe observation mode (passive scope-in-firmware)
+  if (input.equalsIgnoreCase("observe"))
+  {
+    debugMode = true;   // pause the normal updateRowOutputs() loop
+    cycleMode = false;
+    strobeObserveStart();
+    return;
+  }
+
   // Expect a 15-digit binary string
   if (input.length() != 15)
   {
     Serial.println("DEBUG: Enter 15 binary digits (e.g. 110000001000000)");
-    Serial.println("       or 'cycle' to cycle through all pins.");
-    Serial.println("       or 'off' to release all pins.");
+    Serial.println("       or 'cycle'   to cycle through all pins");
+    Serial.println("       or 'observe' to log column edges from a real TI");
+    Serial.println("       or 'off'     to release all pins / stop observing");
     return;
   }
 
@@ -974,6 +1472,10 @@ void loop()
 {
   processSerialDebug();
 
+  // Drain the strobe-observation ring buffer to serial. Active only when
+  // 'observe' mode is on; otherwise this is a one-flag-check no-op.
+  strobeObserveDrain();
+
   if (!debugMode)
   {
 #ifdef INPUT_USB
@@ -982,6 +1484,10 @@ void loop()
 
 #ifdef INPUT_BLE
     bleTask();
+#endif
+
+#ifdef ENABLE_TYPE_AHEAD_BUFFER
+    processTypeAheadBuffer();
 #endif
 
     updateRowOutputs();

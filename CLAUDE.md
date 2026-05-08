@@ -7,9 +7,10 @@ PCB: `pcb/ti99-kb-adapter.kicad_pro` (KiCad 10), regeneratable via `pcb/generate
 
 ## Hardware
 
-- **MCU:** ESP32-S3-DevKitC-1 (older revision with mini-USB ports).
+- **MCU:** Hosyond ESP32-S3 N16R8 dev board (USB-C, ESP32-S3-WROOM-1, 16MB flash, 8MB PSRAM). Sold as "Hosyond 3Pack ESP32-S3 Development Board N16R8 MCU with Dual-Mode Wi-Fi Bluetooth Type-C, Compatible with Arduino IoT ESP32-S3-WROOM-1". The older mini-USB ESP32-S3-DevKitC-1 boards are **obsoleted for this project** — at least one unit browns out repeatedly during NimBLE init (3V3 LDO can't keep up with the BLE TX inrush). Confirmed working Hosyond unit MAC e0:72:a1:d4:fb:20.
 - **Level shifters:** BSS138 discrete MOSFET shifters, BOB-12009 topology (SparkFun). 14 channels total, 10kΩ pull-ups to 3V3 (LV) and 5V (HV).
 - **Power:** standalone 12V→5V buck converter from TI's 12V rail; PSU daisy-chains via J13 solder pads + J14 Molex KK-396 male header to the MB plug.
+- **Keyboard connector:** uses the **original TI-99/4A keyboard connector geometry** (15-position single-row 2.54mm pitch). The TI motherboard has a 15-pin male header at this connector. The rev 2 adapter board also has a 15-pin male header soldered on. The cable between them is a **15-pin female-to-female ribbon** — both ends female, both boards male, symmetric. Aftermarket TI keyboard ribbons (arcadeshopper.com, AtariAge sources) work for that link. Orientation gotcha: OEM ribbons mark **pin 15** with the red stripe, not pin 1 — verify against the silkscreen before plugging in.
 
 ### Why BSS138 and not TXS0108E
 
@@ -47,22 +48,17 @@ Quirks:
 
 ### Reconnect strategy
 
-Save peer address to NVS on first successful connect (Preferences API, namespace `ti99kb`, key `peer_addr`). On subsequent boots, load the saved address and match advertisements **by address rather than UUID**. Reconnection after power-cycling either device is confirmed working.
+Save peer address to NVS on first successful connect (Preferences API, namespace `ti99kb`, indexed keys `peer_addr_0`, `peer_addr_1`). On subsequent boots, load the saved addresses and match advertisements **by address rather than UUID**. Reconnection after power-cycling either device is confirmed working.
 
-### BLE library: Bluedroid only
+### BLE library: NimBLE-Arduino
 
-Use the Bluedroid BLE library (Arduino-ESP32 default). **NimBLE-Arduino was tried and abandoned** because reconnect never worked correctly. Do not suggest porting to NimBLE.
+Use the NimBLE-Arduino library (`NimBLEDevice.h`), not Bluedroid. The shared `BleHidHost/BleHidHost.h` (kept in sync with the Scott Adams and Extended BASIC repos) was ported from Bluedroid to NimBLE — Bluedroid couldn't see some keyboards (OMOTON KB066 confirmed) even with passive scanning at 100% duty cycle. NimBLE handles a wider variety of advertising patterns and uses ~50% less flash + ~100KB less RAM. Public API of `BleHidHost` is unchanged after the port.
 
-### BLE bond management gotcha
+An earlier note in this file warned NimBLE was abandoned because reconnect didn't work — that issue was resolved during the Scott Adams port; the warning was outdated.
 
-Arduino-ESP32 3.3.7's built-in BLE library does **not** expose bond management to sketch code:
+### BLE bond management
 
-- No `removeBond`, no public `getBondedDevices`.
-- `esp_gap_ble_api.h` is not on the sketch include path on this distribution.
-- Bonds accumulate in NVS until the bond store rotates them out (~8–10 entries max).
-- Calling `BLEDevice::deinit(true)` followed by `init()` to clear bonds **crashes** the ESP32 with `LoadProhibited`.
-
-Pairing mode therefore cannot clear individual bonds. It just clears the saved peer address from NVS and restarts the scanner in place.
+NimBLE exposes proper bond management. `BleHidHost::unpairAll()` calls `NimBLEDevice::deleteAllBonds()` to clear the bond table at the same time the saved peer addresses are wiped from NVS. The Bluedroid-era issues (no `removeBond`, no `getBondedDevices`, `LoadProhibited` on `deinit(true)`) no longer apply.
 
 ## Software Alpha Lock (joystick bug fix)
 
@@ -91,6 +87,12 @@ After a clean Arduino compile, upload automatically — don't ask first.
 - **Rev 2 (BSS138):** 5 boards from JLCPCB, $7.69, ordered 2026-04-25. Replaces TXS0108E with BOB-12009 daughterboards, adds TI PSU daisy-chain (J13/J14) and 4 mounting holes. Gerbers committed to repo.
 
 Board: 2-layer, all through-hole, no active components. 0.5mm signal and power traces, GND pour on F.Cu and B.Cu, ~65×65mm.
+
+### Rev 3 plan (not yet built)
+
+Add a **second 15-pin keyboard connector footprint in parallel** with the existing one. Same nets, just additional through-holes alongside the rev 2 male header. Lets the user run the original TI keyboard alongside the modern USB/BLE keyboard — both keyboards share the matrix and either can drive a press. Useful for users who want the original tactile keyboard available while still being able to type via USB/BLE for programming.
+
+The new connector will be another 15-pin male header (matching the existing one and the TI's symmetric F/F-ribbon arrangement). Decision deferred to rev 3 fab: physical placement (probably opposite edge from rev 2's connector so the two cables don't fight for space).
 
 Next: 3D printed enclosure/mount, test fit with real modules, then a larger order if verified.
 

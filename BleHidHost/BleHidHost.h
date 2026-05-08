@@ -1,5 +1,5 @@
 /*
- * BleHidHost — multi-peer BLE HID host for ESP32-S3 (Bluedroid stack).
+ * BleHidHost — multi-peer BLE HID host for ESP32-S3 (NimBLE stack).
  *
  * Scans for HID devices, connects to up to MAX_PEERS of them
  * simultaneously, subscribes to input reports on each, and forwards
@@ -10,6 +10,12 @@
  * Why multi-peer: in a TI BASIC simulator you need both a keyboard
  * (to type programs) AND a gamepad (CALL JOYST). A single-peer host
  * forces the user to repeatedly forget/re-pair, which is unusable.
+ *
+ * Why NimBLE: this file used to be Bluedroid-based, which couldn't
+ * see certain BLE-HID keyboards (OMOTON KB066 observed) even with
+ * passive scanning, 100% duty cycle, and Passkey Entry pairing.
+ * NimBLE handles a wider variety of advertising patterns and uses
+ * ~50% less flash and ~100KB less RAM. Public API is unchanged.
  *
  * Usage:
  *
@@ -41,15 +47,14 @@
 #pragma once
 
 #include <Arduino.h>
-#include <BLEDevice.h>
-#include <BLESecurity.h>
+#include <NimBLEDevice.h>
 #include <Preferences.h>
 
 class BleHidHost
 {
 public:
-  // 2 = keyboard + gamepad. Bluedroid on ESP32-S3 supports more
-  // central connections, but 2 is what we need and keeps RAM tight.
+  // 2 = keyboard + gamepad. NimBLE on ESP32-S3 supports more central
+  // connections, but 2 is what we need and keeps RAM tight.
   static const int MAX_PEERS = 2;
 
   typedef void (*ReportCallback)(const uint8_t* data, size_t len);
@@ -62,36 +67,64 @@ public:
 
   // Safe to call from any context (BLE notify callbacks, ISRs, etc.).
   // The actual transition runs from task() on the main loop.
-  static void requestPairingMode() { _pairingRequested = true; }
+  // User-initiated pairing — opens the window AND flags it so the
+  // application shows a takeover UI. For silent watchdog
+  // reconnections, use requestSilentScan() instead.
+  static void requestPairingMode() { _userInitiatedRequested = true; _pairingRequested = true; }
   static void requestUnpairAll()   { _unpairRequested  = true; }
 
   static bool isConnected();
   static bool isReady();
   static bool inPairingMode()  { return _pairingMode; }
+  // True only when the user explicitly asked for pairing (BOOT
+  // button / F12), not when a silent watchdog reconnect kicked off a
+  // scan window. Lets the application show a full-screen pairing UI
+  // for user-initiated requests while keeping background reconnects
+  // invisible.
+  static bool userInitiatedPairing() { return _pairingMode && _userInitiatedPairing; }
+  // Request a *silent* scan window — same machinery, but the
+  // userInitiatedPairing() flag stays false so the application can
+  // skip any UI takeover.
+  static void requestSilentScan() { _pairingRequested = true; }
+  // Milliseconds remaining in the current pairing window (0 if not
+  // pairing).
+  static unsigned long pairingRemainingMs()
+  {
+    if (!_pairingMode) return 0;
+    long remain = (long)(_pairingDeadline - millis());
+    return remain > 0 ? (unsigned long)remain : 0;
+  }
   static int  peerCount();   // number of currently-connected peers
 
 private:
-  static BLEUUID _hidServiceUUID;
-  static BLEUUID _reportCharUUID;
+  static NimBLEUUID _hidServiceUUID;   // 0x1812
+  static NimBLEUUID _reportCharUUID;   // 0x2A4D
 
   struct Peer
   {
-    BLEClient* client = nullptr;
-    BLEAdvertisedDevice* target = nullptr;
-    volatile bool connected = false;
-    volatile bool ready = false;
-    volatile bool doConnect = false;
-    String savedAddress;
+    NimBLEClient* client = nullptr;
+    NimBLEAddress targetAddr;
+    bool          haveTarget = false;
+    volatile bool connected  = false;
+    volatile bool ready      = false;
+    volatile bool doConnect  = false;
+    String        savedAddress;
   };
   static Peer _peers[MAX_PEERS];
 
   static ReportCallback _cb;
-  static volatile bool _doScan;
   static volatile bool _pairingMode;
   static volatile bool _pairingRequested;
+  static volatile bool _userInitiatedRequested;
+  static volatile bool _userInitiatedPairing;
   static volatile bool _unpairRequested;
   static unsigned long _pairingDeadline;
   static uint32_t _pairingWindowMs;
+  // Number of connected peers at the moment pairing was last opened.
+  // The "close-on-first-ready-peer" early-exit only fires when the
+  // current peer count exceeds this — so opening pairing while a
+  // device is already connected doesn't trip the exit immediately.
+  static int _pairingStartPeerCount;
 
   static Preferences _prefs;
   static const char* _nvsNamespace;
@@ -99,7 +132,7 @@ private:
   static const int _bootButtonPin = 0;
 
   // Internal helpers
-  static void _notifyCb(BLERemoteCharacteristic* pChar,
+  static void _notifyCb(NimBLERemoteCharacteristic* pChar,
                         uint8_t* data, size_t len, bool isNotify);
   static bool _connectToServer(int slot);
   static int  _findFreeSlot();
@@ -107,6 +140,7 @@ private:
   static bool _addressIsAlreadyKnownOrConnected(const String& addr);
   static void _persistPeer(int slot);
   static void _loadAllPeers();
+  static void _bootButtonIsr();
 
   // Inner callback classes
   class ClientCallbacks;
@@ -116,18 +150,20 @@ private:
 // ---------------------------------------------------------------------------
 // Static member definitions
 // ---------------------------------------------------------------------------
-inline BLEUUID BleHidHost::_hidServiceUUID((uint16_t)0x1812);
-inline BLEUUID BleHidHost::_reportCharUUID((uint16_t)0x2A4D);
+inline NimBLEUUID BleHidHost::_hidServiceUUID((uint16_t)0x1812);
+inline NimBLEUUID BleHidHost::_reportCharUUID((uint16_t)0x2A4D);
 
 inline BleHidHost::Peer BleHidHost::_peers[BleHidHost::MAX_PEERS];
 
 inline BleHidHost::ReportCallback BleHidHost::_cb = nullptr;
-inline volatile bool BleHidHost::_doScan            = false;
-inline volatile bool BleHidHost::_pairingMode       = false;
-inline volatile bool BleHidHost::_pairingRequested  = false;
-inline volatile bool BleHidHost::_unpairRequested   = false;
-inline unsigned long BleHidHost::_pairingDeadline   = 0;
-inline uint32_t      BleHidHost::_pairingWindowMs   = 30000UL;
+inline volatile bool BleHidHost::_pairingMode             = false;
+inline volatile bool BleHidHost::_pairingRequested        = false;
+inline volatile bool BleHidHost::_userInitiatedRequested  = false;
+inline volatile bool BleHidHost::_userInitiatedPairing    = false;
+inline volatile bool BleHidHost::_unpairRequested         = false;
+inline unsigned long BleHidHost::_pairingDeadline         = 0;
+inline uint32_t      BleHidHost::_pairingWindowMs         = 30000UL;
+inline int           BleHidHost::_pairingStartPeerCount   = 0;
 
 inline Preferences BleHidHost::_prefs;
 inline const char* BleHidHost::_nvsNamespace = "blehidhost";
@@ -137,12 +173,38 @@ inline const char* BleHidHost::_nvsNamespace = "blehidhost";
 // ---------------------------------------------------------------------------
 inline int BleHidHost::_findFreeSlot()
 {
-  // A slot is "free" when not connected AND not holding a saved peer.
+  // First-pass: a slot is genuinely free (no connection, no saved
+  // peer).
   for (int i = 0; i < MAX_PEERS; i++)
   {
     if (!_peers[i].connected && _peers[i].savedAddress.length() == 0)
     {
       return i;
+    }
+  }
+  // Second-pass (only meaningful in pairing mode): every slot has a
+  // saved address but is not connected. The user explicitly asked to
+  // pair a NEW device, so evict the first non-connected slot —
+  // forgetting one stale bond to make room. Without this, two stale
+  // bonds permanently lock out fresh pairing.
+  if (_pairingMode)
+  {
+    for (int i = 0; i < MAX_PEERS; i++)
+    {
+      if (!_peers[i].connected)
+      {
+        Serial.printf("BleHidHost: evicting stale bond on slot %d (%s) "
+                      "to make room\n",
+                      i, _peers[i].savedAddress.c_str());
+        _peers[i].savedAddress = "";
+        _peers[i].ready = false;
+        _prefs.begin(_nvsNamespace, false);
+        char key[16];
+        snprintf(key, sizeof(key), "peer_addr_%d", i);
+        _prefs.remove(key);
+        _prefs.end();
+        return i;
+      }
     }
   }
   return -1;
@@ -152,11 +214,7 @@ inline int BleHidHost::_findSlotByAddress(const String& addr)
 {
   for (int i = 0; i < MAX_PEERS; i++)
   {
-    if (_peers[i].savedAddress.length() > 0 &&
-        _peers[i].savedAddress.equalsIgnoreCase(addr))
-    {
-      return i;
-    }
+    if (_peers[i].savedAddress == addr) return i;
   }
   return -1;
 }
@@ -165,10 +223,10 @@ inline bool BleHidHost::_addressIsAlreadyKnownOrConnected(const String& addr)
 {
   for (int i = 0; i < MAX_PEERS; i++)
   {
-    if (_peers[i].connected &&
-        _peers[i].savedAddress.equalsIgnoreCase(addr))
+    if (_peers[i].connected && _peers[i].client)
     {
-      return true;
+      String peerAddr = _peers[i].client->getPeerAddress().toString().c_str();
+      if (peerAddr == addr) return true;
     }
   }
   return false;
@@ -176,53 +234,342 @@ inline bool BleHidHost::_addressIsAlreadyKnownOrConnected(const String& addr)
 
 inline void BleHidHost::_persistPeer(int slot)
 {
+  if (slot < 0 || slot >= MAX_PEERS) return;
   _prefs.begin(_nvsNamespace, false);
   char key[16];
   snprintf(key, sizeof(key), "peer_addr_%d", slot);
   _prefs.putString(key, _peers[slot].savedAddress);
   _prefs.end();
+  Serial.printf("BleHidHost: slot %d saved %s\n",
+                slot, _peers[slot].savedAddress.c_str());
 }
 
 inline void BleHidHost::_loadAllPeers()
 {
   _prefs.begin(_nvsNamespace, true);
-
-  // Load indexed keys "peer_addr_0", "peer_addr_1", ...
   for (int i = 0; i < MAX_PEERS; i++)
   {
     char key[16];
     snprintf(key, sizeof(key), "peer_addr_%d", i);
     _peers[i].savedAddress = _prefs.getString(key, "");
-  }
-
-  // Backward-compat: migrate the old single-peer "peer_addr" key into
-  // slot 0 the first time this firmware runs.
-  if (_peers[0].savedAddress.length() == 0)
-  {
-    String legacy = _prefs.getString("peer_addr", "");
-    if (legacy.length() > 0)
-    {
-      _peers[0].savedAddress = legacy;
-      _prefs.end();
-      _persistPeer(0);
-      _prefs.begin(_nvsNamespace, false);
-      _prefs.remove("peer_addr");
-    }
-  }
-  _prefs.end();
-
-  for (int i = 0; i < MAX_PEERS; i++)
-  {
     if (_peers[i].savedAddress.length() > 0)
     {
       Serial.printf("BleHidHost: peer %d = %s\n",
                     i, _peers[i].savedAddress.c_str());
     }
   }
+  _prefs.end();
 }
 
 // ---------------------------------------------------------------------------
-// State queries
+// Notify callback — forwards raw HID reports to the user's handler
+// ---------------------------------------------------------------------------
+inline void BleHidHost::_notifyCb(NimBLERemoteCharacteristic* pChar,
+                                  uint8_t* data, size_t len, bool isNotify)
+{
+  (void)pChar;
+  (void)isNotify;
+  if (_cb && data && len > 0) _cb(data, len);
+}
+
+// ---------------------------------------------------------------------------
+// Inner callback classes
+// ---------------------------------------------------------------------------
+class BleHidHost::ClientCallbacks : public NimBLEClientCallbacks
+{
+  void onConnect(NimBLEClient* pClient) override
+  {
+    int slot = -1;
+    for (int i = 0; i < MAX_PEERS; i++)
+    {
+      if (_peers[i].client == pClient) { slot = i; break; }
+    }
+    if (slot < 0) return;
+    _peers[slot].connected = true;
+    Serial.printf("BleHidHost: peer %d connected.\n", slot);
+    // Encryption / pairing is started from _connectToServer on the
+    // main loop after connect() returns. Calling NimBLE APIs from
+    // inside this callback context can deadlock the host thread.
+  }
+
+  void onConnectFail(NimBLEClient* pClient, int reason) override
+  {
+    int slot = -1;
+    for (int i = 0; i < MAX_PEERS; i++)
+    {
+      if (_peers[i].client == pClient) { slot = i; break; }
+    }
+    Serial.printf("BleHidHost: %s connect failed, reason=%d\n",
+                  pClient->getPeerAddress().toString().c_str(), reason);
+    if (slot >= 0)
+    {
+      _peers[slot].connected = false;
+      _peers[slot].haveTarget = false;
+    }
+  }
+
+  void onDisconnect(NimBLEClient* pClient, int reason) override
+  {
+    int slot = -1;
+    for (int i = 0; i < MAX_PEERS; i++)
+    {
+      if (_peers[i].client == pClient) { slot = i; break; }
+    }
+    if (slot < 0) return;
+    _peers[slot].connected = false;
+    _peers[slot].ready = false;
+    Serial.printf("BleHidHost: peer %d disconnected (reason=%d).\n",
+                  slot, reason);
+  }
+
+  // Called when the peer (e.g., an Apple keyboard with no display)
+  // wants us to type a passkey it's displaying. Headless host —
+  // not supported, returning won't satisfy auth.
+  void onPassKeyEntry(NimBLEConnInfo& connInfo) override
+  {
+    Serial.println("BleHidHost: peer requested passkey input "
+                   "(host has no input — auth will likely fail).");
+    NimBLEDevice::injectPassKey(connInfo, 0);
+  }
+
+  // Called when WE display a passkey for the peer to type
+  // (BLE_HS_IO_DISPLAY_ONLY mode). NimBLE wants us to return the
+  // 6-digit passkey that the user will type on the keyboard.
+  uint32_t onPassKeyDisplay(NimBLEConnInfo& connInfo) override
+  {
+    (void)connInfo;
+    uint32_t passkey = (uint32_t)random(100000, 1000000);
+    Serial.printf("\n"
+                  "==========================================\n"
+                  "BleHidHost: PAIRING PASSKEY  %06lu\n"
+                  "Type those 6 digits on the keyboard then\n"
+                  "press Enter to complete pairing.\n"
+                  "==========================================\n",
+                  (unsigned long)passkey);
+    return passkey;
+  }
+
+  // Numeric comparison fallback when both sides have a display.
+  void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) override
+  {
+    Serial.printf("BleHidHost: confirm pin %06lu (auto-accepting).\n",
+                  (unsigned long)pin);
+    NimBLEDevice::injectConfirmPasskey(connInfo, true);
+  }
+
+  void onAuthenticationComplete(NimBLEConnInfo& connInfo) override
+  {
+    if (connInfo.isEncrypted())
+    {
+      Serial.println("BleHidHost: authentication successful.");
+    }
+    else
+    {
+      Serial.println("BleHidHost: authentication FAILED — disconnecting.");
+      NimBLEClient* pClient =
+        NimBLEDevice::getClientByHandle(connInfo.getConnHandle());
+      if (pClient) pClient->disconnect();
+    }
+  }
+};
+
+class BleHidHost::ScanCallbacks : public NimBLEScanCallbacks
+{
+  void onResult(const NimBLEAdvertisedDevice* ad) override
+  {
+    if (!ad) return;
+    String addr = ad->getAddress().toString().c_str();
+    String name = ad->getName().c_str();
+    bool isHid = ad->isAdvertisingService(_hidServiceUUID);
+
+    // Some BLE-HID gamepads (8BitDo Zero 2, several generic pads)
+    // don't include the HID Service UUID 0x1812 in their primary
+    // advertisement — they put it in the GATT services after
+    // connection. Use a name-substring fallback so those still
+    // pair. Names checked are common gamepad/keyboard prefixes.
+    bool nameLooksHid = false;
+    if (name.length() > 0)
+    {
+      const char* hits[] = {
+        "8Bit", "8bit", "Zero", "SN30", "Gamepad", "gamepad",
+        "Joystick", "joystick", "Pro Controller", "DualSense",
+        "DualShock", "Xbox", "Keyboard", "keyboard", "Mouse",
+        // Apple keyboards: "Magic Keyboard" matches "Keyboard"
+        // already, but legacy "Apple Wireless Keyboard" likewise
+        // does — adding bare "Magic" / "Apple" / "iPad" / "iMac"
+        // covers any short-form names we haven't seen.
+        "Magic", "Apple", "iPad", "iMac",
+        // Third-party BLE keyboards that advertise with a vendor /
+        // model name and no HID UUID in the primary packet.
+        "OMOTON", "Omoton", "KB066",
+        // 8BitDo internal model codes that appear instead of the
+        // friendly name on BLE: Q35 = Zero 2.
+        "Q35"
+      };
+      for (auto h : hits)
+      {
+        if (name.indexOf(h) >= 0) { nameLooksHid = true; break; }
+      }
+    }
+
+    // Scan-spam debug. On while we're chasing keyboards that aren't
+    // being detected — flip back to #if 0 once devices are pairing
+    // reliably so we don't fill the serial monitor every pairing
+    // window.
+#if 1
+    if (_pairingMode)
+    {
+      int uuidCount = ad->getServiceUUIDCount();
+      char uuids[120] = {0};
+      int upos = 0;
+      for (int i = 0; i < uuidCount && upos < (int)sizeof(uuids) - 8; i++)
+      {
+        std::string s = ad->getServiceUUID(i).toString();
+        upos += snprintf(uuids + upos, sizeof(uuids) - upos,
+                         "%s%s", upos ? "," : "", s.c_str());
+      }
+      uint16_t mfg = 0;
+      if (ad->haveManufacturerData())
+      {
+        std::string md = ad->getManufacturerData();
+        if (md.length() >= 2)
+        {
+          mfg = ((uint8_t)md[1] << 8) | (uint8_t)md[0];
+        }
+      }
+      Serial.printf("BleHidHost: scan saw %s name='%s' hid=%d hint=%d "
+                    "uuids=%d[%s] mfg=0x%04x rssi=%d\n",
+                    addr.c_str(), name.c_str(),
+                    isHid ? 1 : 0, nameLooksHid ? 1 : 0,
+                    uuidCount, uuids, mfg, ad->getRSSI());
+    }
+#endif
+
+    // Already connected as one of our peers? Ignore.
+    if (_addressIsAlreadyKnownOrConnected(addr)) return;
+
+    // Decide which slot, if any, this advertisement should bind to:
+    //  1. A saved-but-not-connected peer slot whose address matches.
+    //  2. (Only in pairing mode + isHid) the first totally free slot.
+    int slot = _findSlotByAddress(addr);
+    if (slot >= 0 && _peers[slot].connected) return;
+    if (slot < 0)
+    {
+      if (!_pairingMode || (!isHid && !nameLooksHid)) return;
+      slot = _findFreeSlot();
+      if (slot < 0)
+      {
+        Serial.printf("BleHidHost: pairing — no free slot for %s\n",
+                      addr.c_str());
+        return;
+      }
+    }
+
+    Serial.printf("BleHidHost: %s %s (%s) -> slot %d\n",
+                  _peers[slot].savedAddress.length() ? "Reconnecting" : "Pairing",
+                  ad->getName().c_str(), addr.c_str(), slot);
+
+    NimBLEDevice::getScan()->stop();
+    _peers[slot].targetAddr = ad->getAddress();
+    _peers[slot].haveTarget = true;
+    _peers[slot].doConnect = true;
+  }
+
+  void onScanEnd(const NimBLEScanResults& results, int reason) override
+  {
+    (void)results;
+    (void)reason;
+    // Scan ended naturally. task() will restart it on the next tick
+    // if we're still in pairing mode.
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Connect to a previously-targeted peer
+// ---------------------------------------------------------------------------
+inline bool BleHidHost::_connectToServer(int slot)
+{
+  if (slot < 0 || slot >= MAX_PEERS) return false;
+  Peer& p = _peers[slot];
+  if (!p.haveTarget) return false;
+
+  Serial.printf("BleHidHost: slot %d connecting to %s...\n",
+                slot, p.targetAddr.toString().c_str());
+
+  if (!p.client)
+  {
+    p.client = NimBLEDevice::createClient();
+    static ClientCallbacks s_cb;
+    p.client->setClientCallbacks(&s_cb, false);
+    p.client->setConnectionParams(12, 12, 0, 150);
+    p.client->setConnectTimeout(15000);   // 15 s (units: ms — was 15 ms!)
+  }
+
+  // Connect at the GAP layer only — passing refreshServices=false
+  // skips the post-connect service discovery that NimBLE does by
+  // default. HID peripherals don't expose their services until
+  // paired/encrypted, so service discovery here would always fail
+  // and connect() would return false even though the radio is up.
+  if (!p.client->connect(p.targetAddr, false /*refreshServices*/))
+  {
+    Serial.printf("BleHidHost: slot %d connect() returned false\n", slot);
+    p.haveTarget = false;
+    return false;
+  }
+
+  // Trigger pairing / encryption. Calling secureConnection from
+  // outside the onConnect callback to avoid deadlocking the host
+  // thread — see NimBLE_Secure_Client.ino.
+  if (!p.client->secureConnection())
+  {
+    Serial.printf("BleHidHost: slot %d secureConnection failed\n", slot);
+    p.client->disconnect();
+    p.haveTarget = false;
+    return false;
+  }
+
+  // Now that we're paired, discover services.
+  p.client->discoverAttributes();
+
+  // Discover HID service.
+  NimBLERemoteService* pSvc = p.client->getService(_hidServiceUUID);
+  if (!pSvc)
+  {
+    Serial.printf("BleHidHost: slot %d has no HID service — disconnecting.\n",
+                  slot);
+    p.client->disconnect();
+    p.haveTarget = false;
+    return false;
+  }
+
+  // Subscribe to every Report characteristic (UUID 0x2A4D) the
+  // peripheral exposes. Some HID devices have multiple input
+  // reports (keyboard + consumer keys, etc.).
+  std::vector<NimBLERemoteCharacteristic*> chars = pSvc->getCharacteristics(true);
+  int subscribed = 0;
+  for (NimBLERemoteCharacteristic* pChar : chars)
+  {
+    if (pChar && pChar->getUUID() == _reportCharUUID && pChar->canNotify())
+    {
+      if (pChar->subscribe(true, _notifyCb))
+      {
+        subscribed++;
+      }
+    }
+  }
+  Serial.printf("BleHidHost: slot %d ready, %d input report(s).\n",
+                slot, subscribed);
+
+  p.ready = true;
+  // Persist the address (use the canonical lowercase form NimBLE returns).
+  p.savedAddress = p.targetAddr.toString().c_str();
+  _persistPeer(slot);
+  p.haveTarget = false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Public state queries
 // ---------------------------------------------------------------------------
 inline bool BleHidHost::isConnected()
 {
@@ -237,7 +584,7 @@ inline bool BleHidHost::isReady()
 {
   for (int i = 0; i < MAX_PEERS; i++)
   {
-    if (_peers[i].ready) return true;
+    if (_peers[i].connected && _peers[i].ready) return true;
   }
   return false;
 }
@@ -253,248 +600,36 @@ inline int BleHidHost::peerCount()
 }
 
 // ---------------------------------------------------------------------------
-// Inner callback classes
+// Setup / lifecycle
 // ---------------------------------------------------------------------------
-class BleHidHost::ClientCallbacks : public BLEClientCallbacks
-{
-public:
-  ClientCallbacks(int peerIdx) : _peerIdx(peerIdx) {}
-
-private:
-  int _peerIdx;
-
-  void onConnect(BLEClient* client) override
-  {
-    Serial.printf("BleHidHost: peer %d connected.\n", _peerIdx);
-    _peers[_peerIdx].connected = true;
-  }
-  void onDisconnect(BLEClient* client) override
-  {
-    Serial.printf("BleHidHost: peer %d disconnected.\n", _peerIdx);
-    _peers[_peerIdx].connected = false;
-    _peers[_peerIdx].ready = false;
-    _doScan = true;   // try to reconnect this peer
-  }
-};
-
-class BleHidHost::ScanCallbacks : public BLEAdvertisedDeviceCallbacks
-{
-  void onResult(BLEAdvertisedDevice ad) override
-  {
-    String addr = ad.getAddress().toString();
-    String name = ad.getName().c_str();
-    bool isHid = ad.haveServiceUUID() &&
-                 ad.isAdvertisingService(_hidServiceUUID);
-
-    // Some BLE-HID gamepads (8BitDo Zero 2, several generic pads)
-    // don't include the HID Service UUID 0x1812 in their primary
-    // advertisement — they put it in the GATT services after
-    // connection. Use a name-substring fallback so those still
-    // pair. Names checked are common gamepad/keyboard prefixes.
-    bool nameLooksHid = false;
-    if (name.length() > 0)
-    {
-      const char* hits[] = {
-        "8Bit", "8bit", "Zero", "SN30", "Gamepad", "gamepad",
-        "Joystick", "joystick", "Pro Controller", "DualSense",
-        "DualShock", "Xbox", "Keyboard", "keyboard", "Mouse",
-        // 8BitDo internal model codes that appear instead of the
-        // friendly name on BLE: Q35 = Zero 2.
-        "Q35"
-      };
-      for (auto h : hits)
-      {
-        if (name.indexOf(h) >= 0) { nameLooksHid = true; break; }
-      }
-    }
-
-    // Scan-spam debug — enable when troubleshooting which devices
-    // are visible during pairing.
-#if 0
-    if (_pairingMode)
-    {
-      Serial.printf("BleHidHost: scan saw %s name='%s' hid=%d hint=%d\n",
-                    addr.c_str(), name.c_str(),
-                    isHid ? 1 : 0, nameLooksHid ? 1 : 0);
-    }
-#endif
-
-    // Already connected as one of our peers? Ignore.
-    if (_addressIsAlreadyKnownOrConnected(addr)) return;
-
-    // Decide which slot, if any, this advertisement should bind to:
-    //  1. A saved-but-not-connected peer slot whose address matches.
-    //  2. (Only in pairing mode + isHid) the first totally free slot.
-    int slot = _findSlotByAddress(addr);
-    if (slot >= 0 && _peers[slot].connected)
-    {
-      // Already connected on that slot — shouldn't happen given the
-      // check above, but bail anyway.
-      return;
-    }
-    if (slot < 0)
-    {
-      // In pairing mode, accept devices that EITHER advertise the HID
-      // service in primary advertising (TI-faithful), OR have a name
-      // that looks like a HID device. The latter catches 8BitDo
-      // gamepads etc. that put HID in the GATT only — _connectToServer
-      // probes for the HID service post-connect and disconnects if
-      // it's missing, so a name-based false positive is recoverable.
-      if (!_pairingMode || (!isHid && !nameLooksHid)) return;
-      slot = _findFreeSlot();
-      if (slot < 0)
-      {
-        Serial.printf("BleHidHost: pairing — no free slot for %s\n",
-                      addr.c_str());
-        return;
-      }
-    }
-
-    Serial.printf("BleHidHost: %s %s (%s) → slot %d\n",
-                  _peers[slot].savedAddress.length() ? "Reconnecting" : "Pairing",
-                  ad.getName().c_str(), addr.c_str(), slot);
-
-    BLEDevice::getScan()->stop();
-    if (_peers[slot].target != nullptr) delete _peers[slot].target;
-    _peers[slot].target = new BLEAdvertisedDevice(ad);
-    _peers[slot].doConnect = true;
-  }
-};
-
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
-inline void BleHidHost::_notifyCb(BLERemoteCharacteristic* pChar,
-                                   uint8_t* data, size_t len, bool isNotify)
-{
-  // Single shared callback. Caller dispatches by report shape.
-  if (_cb != nullptr) _cb(data, len);
-}
-
-inline bool BleHidHost::_connectToServer(int slot)
-{
-  Peer& p = _peers[slot];
-  if (p.target == nullptr) return false;
-
-  Serial.printf("BleHidHost: slot %d connecting to %s (%s)...\n",
-                slot, p.target->getName().c_str(),
-                p.target->getAddress().toString().c_str());
-
-  if (p.client != nullptr)
-  {
-    // Stale client from a previous attempt — release it.
-    if (p.client->isConnected()) p.client->disconnect();
-    delete p.client;
-    p.client = nullptr;
-  }
-
-  p.client = BLEDevice::createClient();
-  p.client->setClientCallbacks(new ClientCallbacks(slot));
-
-  // Some BLE-HID peripherals (8BitDo gamepads in particular) reject
-  // the first connect attempt after entering pairing mode — usually
-  // a timing race between our scan-stop and their advertising
-  // window. Retry up to 3 times before giving up.
-  bool ok = false;
-  for (int attempt = 0; attempt < 3; attempt++)
-  {
-    if (p.client->connect(p.target))
-    {
-      ok = true;
-      break;
-    }
-    Serial.printf("BleHidHost: slot %d connect() attempt %d failed%s\n",
-                  slot, attempt + 1,
-                  attempt < 2 ? ", retrying..." : ".");
-    if (p.client->isConnected()) p.client->disconnect();
-    delay(200);
-  }
-  if (!ok) return false;
-  p.client->setMTU(185);
-
-  BLERemoteService* pHidService = p.client->getService(_hidServiceUUID);
-  if (pHidService == nullptr)
-  {
-    Serial.printf("BleHidHost: slot %d HID service not found.\n", slot);
-    p.client->disconnect();
-    return false;
-  }
-
-  int subscribed = 0;
-  std::map<std::string, BLERemoteCharacteristic*>* pCharMap =
-    pHidService->getCharacteristics();
-
-  for (auto const& entry : *pCharMap)
-  {
-    BLERemoteCharacteristic* pChar = entry.second;
-    if (pChar->getUUID().equals(_reportCharUUID) && pChar->canNotify())
-    {
-      BLERemoteDescriptor* pReportRef =
-        pChar->getDescriptor(BLEUUID((uint16_t)0x2908));
-      if (pReportRef != nullptr)
-      {
-        String refValue = pReportRef->readValue();
-        if (refValue.length() >= 2 && refValue[1] == 1)   // input report
-        {
-          pChar->registerForNotify(_notifyCb);
-          subscribed++;
-        }
-      }
-      else
-      {
-        pChar->registerForNotify(_notifyCb);
-        subscribed++;
-      }
-    }
-  }
-
-  if (subscribed == 0)
-  {
-    Serial.printf("BleHidHost: slot %d no input reports found.\n", slot);
-    p.client->disconnect();
-    return false;
-  }
-
-  p.ready = true;
-  Serial.printf("BleHidHost: slot %d ready, %d input report(s).\n",
-                slot, subscribed);
-
-  // Persist this peer's address (it might be a new pairing).
-  String connectedAddr = p.target->getAddress().toString();
-  if (connectedAddr != p.savedAddress)
-  {
-    p.savedAddress = connectedAddr;
-    _persistPeer(slot);
-    Serial.printf("BleHidHost: slot %d saved %s\n", slot,
-                  p.savedAddress.c_str());
-  }
-  return true;
-}
-
 inline void BleHidHost::begin(const char* deviceName, const char* nvsNamespace)
 {
   _nvsNamespace = nvsNamespace;
-
   _loadAllPeers();
 
-  BLEDevice::init(deviceName);
-  BLESecurity* pSecurity = new BLESecurity();
-  pSecurity->setCapability(ESP_IO_CAP_NONE);
-  pSecurity->setAuthenticationMode(true, false, true);
-  // Default security callbacks — required on some boards for bonding
-  // to complete before service discovery, otherwise HID keyboards like
-  // the L75 expose only generic services on first connect.
-  BLEDevice::setSecurityCallbacks(new BLESecurityCallbacks());
+  NimBLEDevice::init(deviceName);
+  NimBLEDevice::setPower(3);   // +3 dBm
 
-  BLEScan* pScan = BLEDevice::getScan();
-  pScan->setAdvertisedDeviceCallbacks(new ScanCallbacks());
-  pScan->setInterval(1349);
-  pScan->setWindow(449);
+  // Bonding + MITM protection. Secure Connections (SC) on. With SC
+  // and DISPLAY_ONLY, peripherals that demand passkey entry get our
+  // 6-digit code via onPassKeyDisplay; Just-Works peers skip it.
+  NimBLEDevice::setSecurityAuth(true /*bond*/, true /*mitm*/, true /*sc*/);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+
+  NimBLEScan* pScan = NimBLEDevice::getScan();
+  static ScanCallbacks s_scanCb;
+  pScan->setScanCallbacks(&s_scanCb, false);
+  pScan->setInterval(100);   // 100 ms
+  pScan->setWindow(100);     // 100 ms (100% duty cycle)
   pScan->setActiveScan(true);
-  pScan->start(5, false);
-  _doScan = true;
+  // Start a 5-second initial scan to give saved peers a chance to
+  // be re-discovered. After this, scans only run during pairing
+  // windows (see task()).
+  pScan->start(5 * 1000, false);
 
   pinMode(_bootButtonPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(_bootButtonPin),
+                  _bootButtonIsr, FALLING);
   Serial.println("BleHidHost: scanning...");
 }
 
@@ -505,11 +640,12 @@ inline void BleHidHost::enterPairingMode(uint32_t windowMs)
   _pairingMode = true;
   _pairingWindowMs = windowMs;
   _pairingDeadline = millis() + windowMs;
+  _pairingStartPeerCount = peerCount();
 
-  BLEScan* pScan = BLEDevice::getScan();
+  NimBLEScan* pScan = NimBLEDevice::getScan();
   pScan->stop();
   pScan->clearResults();
-  _doScan = true;
+  pScan->start(0, false);   // 0 = scan until stopped
 }
 
 inline void BleHidHost::unpairAll()
@@ -517,13 +653,14 @@ inline void BleHidHost::unpairAll()
   Serial.println("BleHidHost: forgetting all peers.");
   for (int i = 0; i < MAX_PEERS; i++)
   {
-    if (_peers[i].client != nullptr && _peers[i].client->isConnected())
+    if (_peers[i].client && _peers[i].client->isConnected())
     {
       _peers[i].client->disconnect();
     }
     _peers[i].savedAddress = "";
     _peers[i].connected = false;
     _peers[i].ready = false;
+    _peers[i].haveTarget = false;
   }
   _prefs.begin(_nvsNamespace, false);
   for (int i = 0; i < MAX_PEERS; i++)
@@ -532,15 +669,22 @@ inline void BleHidHost::unpairAll()
     snprintf(key, sizeof(key), "peer_addr_%d", i);
     _prefs.remove(key);
   }
-  _prefs.remove("peer_addr");   // legacy
   _prefs.end();
+  // Wipe NimBLE's bond table too, so the host doesn't try to
+  // re-encrypt with stale keys.
+  NimBLEDevice::deleteAllBonds();
 }
 
+// ---------------------------------------------------------------------------
+// Per-loop maintenance task
+// ---------------------------------------------------------------------------
 inline void BleHidHost::task()
 {
   if (_pairingRequested)
   {
     _pairingRequested = false;
+    _userInitiatedPairing = _userInitiatedRequested;
+    _userInitiatedRequested = false;
     enterPairingMode(_pairingWindowMs);
   }
   if (_unpairRequested)
@@ -563,34 +707,40 @@ inline void BleHidHost::task()
   {
     Serial.println("BleHidHost: pairing window expired.");
     _pairingMode = false;
+    _userInitiatedPairing = false;
+    NimBLEDevice::getScan()->stop();
   }
 
-  // Scan whenever any saved peer is missing OR pairing mode is open.
-  bool anyMissing = false;
-  for (int i = 0; i < MAX_PEERS; i++)
+  // Close pairing mode early once a NEW peer has paired and become
+  // ready (the count of connected peers exceeds what we had when the
+  // window opened). The new-vs-existing distinction is important —
+  // opening pairing for a second device while one is already
+  // connected used to insta-close because the existing device was
+  // already in the connected+ready state.
+  if (_pairingMode && peerCount() > _pairingStartPeerCount)
   {
-    if (!_peers[i].connected && _peers[i].savedAddress.length() > 0)
+    for (int i = 0; i < MAX_PEERS; i++)
     {
-      anyMissing = true; break;
+      if (_peers[i].connected && _peers[i].ready)
+      {
+        Serial.println("BleHidHost: pairing complete; closing window.");
+        _pairingMode = false;
+        _userInitiatedPairing = false;
+        NimBLEDevice::getScan()->stop();
+        break;
+      }
     }
   }
-  if ((anyMissing || _pairingMode) && _doScan)
-  {
-    _doScan = false;
-    BLEScan* pScan = BLEDevice::getScan();
-    pScan->clearResults();
-    pScan->start(5, false);
-    _doScan = true;
-  }
+}
 
-  // BOOT button → request pairing.
-  if (digitalRead(_bootButtonPin) == LOW)
-  {
-    delay(50);
-    if (digitalRead(_bootButtonPin) == LOW)
-    {
-      enterPairingMode(_pairingWindowMs);
-      while (digitalRead(_bootButtonPin) == LOW) { delay(50); }
-    }
-  }
+// ISR for the BOOT button. Just flag the request — actual BLE work
+// happens on the next task() call. Not IRAM_ATTR because the volatile
+// flag we touch lives in flash; the linker rejects mixed IRAM/flash
+// access. Acceptable since BOOT-press timing isn't critical and we
+// won't be in the middle of a flash write when the user prods it.
+inline void BleHidHost::_bootButtonIsr()
+{
+  // Idempotent flag set; bounce-safe because re-asserting it has no
+  // effect.
+  _pairingRequested = true;
 }
