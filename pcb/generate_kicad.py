@@ -16,11 +16,11 @@ detection fails on open-drain matrix emulation (latch-up, indeterminate
 levels, documented pad damage). BSS138 + pull-ups is the correct topology
 for a matrix; validated on bench 2026-04-20.
 
-BOB-12009 (SparkFun BSS138) socket pin mapping, confirmed from photo:
-  LV socket pin: 1=LV1, 2=LV2, 3=LV(3V3), 4=GND, 5=LV3, 6=LV4
-  HV socket pin: 1=HV1, 2=HV2, 3=HV(5V),  4=GND, 5=HV3, 6=HV4
-Channel-to-socket-pin: CH1=pin 1, CH2=pin 2, CH3=pin 5, CH4=pin 6
-Rails at pin 3, GNDs at pin 4. GND and rails are directly opposite
+BOB-12009 (SparkFun BSS138) socket pin mapping, confirmed from physical board:
+  LV socket pin: 1=LV4, 2=LV3, 3=GND, 4=LV(3V3), 5=LV2, 6=LV1
+  HV socket pin: 1=HV4, 2=HV3, 3=GND, 4=HV(5V),  5=HV2, 6=HV1
+Channel-to-socket-pin: CH1=pin 6, CH2=pin 5, CH3=pin 2, CH4=pin 1
+GNDs at pin 3, rails at pin 4. GND and rails are directly opposite
 across the board.
 
 Net naming: the LV and HV sides of each BOB are electrically isolated
@@ -47,6 +47,12 @@ Usage:
 import uuid
 import json
 import os
+import sys
+
+# Allow `python generate_kicad.py` from any cwd by ensuring this script's
+# directory is on the import path so generate_parts can be imported.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from generate_parts import bob_12009_symbol, esp32_symbol  # noqa: E402
 
 PROJECT = "ti99-kb-adapter"
 
@@ -104,6 +110,7 @@ class Schematic:
     def __init__(self):
         self.sheet_uuid = uid()
         self.needed_sizes = set()
+        self.needed_parts = set()   # custom parts (lib_id strings) we've placed
         self.components = []
         self.labels = []
         self.wires = []
@@ -164,6 +171,72 @@ class Schematic:
             f"  )"
         )
         return pin_pos
+
+    # -- Add a 2-unit multi-part symbol (e.g. BOB-12009, ESP32-S3-N16R8) --
+    def add_part2(self, ref, lib_id, value, n_per_unit, fp,
+                  x1, y1, x2, y2,
+                  mirror1=False, mirror2=False,
+                  val_pos1=None, val_pos2=None):
+        """Place a 2-unit symbol. Returns (unit1_pins, unit2_pins).
+
+        Each unit lays out like a 1xN connector. Returned dicts use LOCAL
+        pin numbering (1..n_per_unit) so wiring code stays clean. KiCad
+        pad numbers are 1..N for unit 1 and N+1..2N for unit 2.
+
+        Both unit instances share the same Reference designator but have
+        different (unit N) tags, which is how KiCad represents multi-unit
+        components in the schematic.
+        """
+        self.needed_parts.add(lib_id)
+        n = n_per_unit
+        fy = (n - 1) / 2 * 2.54
+
+        def emit_unit(unit_idx, x, y, mirror, val_pos, pad_offset):
+            mirror_line = "\n    (mirror y)" if mirror else ""
+            if val_pos is None:
+                vx, vy, va = x, y - fy - 3.81, 0
+            else:
+                vx, vy, va = val_pos
+
+            pin_lines = []
+            pin_pos = {}
+            for k in range(1, n + 1):
+                py = y - fy + (k - 1) * 2.54
+                px = (x - 5.08) if mirror else (x + 5.08)
+                pin_pos[k] = (px, py)
+                kicad_pad = k + pad_offset
+                pin_lines.append(f'    (pin "{kicad_pad}" (uuid "{uid()}"))')
+
+            iid = uid()
+            self.components.append(
+                f"  (symbol\n"
+                f'    (lib_id "{lib_id}")\n'
+                f"    (at {x:.2f} {y:.2f} 0){mirror_line}\n"
+                f"    (unit {unit_idx})\n"
+                f"    (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)\n"
+                f'    (uuid "{iid}")\n'
+                f'    (property "Reference" "{ref}" (at {x:.2f} {y:.2f} 0)\n'
+                f"      (effects (font (size 1.27 1.27))))\n"
+                f'    (property "Value" "{value}" (at {vx:.2f} {vy:.2f} {va})\n'
+                f"      (effects (font (size 1.27 1.27))))\n"
+                f'    (property "Footprint" "{fp}" (at 0 0 0)\n'
+                f"      (effects (font (size 1.27 1.27)) (hide yes)))\n"
+                f'    (property "Datasheet" "~" (at 0 0 0)\n'
+                f"      (effects (font (size 1.27 1.27)) (hide yes)))\n"
+                + "\n".join(pin_lines) + "\n"
+                f"    (instances\n"
+                f'      (project "{PROJECT}"\n'
+                f'        (path "/{self.sheet_uuid}" (reference "{ref}") '
+                f"(unit {unit_idx}))\n"
+                f"      )\n"
+                f"    )\n"
+                f"  )"
+            )
+            return pin_pos
+
+        u1 = emit_unit(1, x1, y1, mirror1, val_pos1, pad_offset=0)
+        u2 = emit_unit(2, x2, y2, mirror2, val_pos2, pad_offset=n)
+        return u1, u2
 
     # -- Net label at a position --
     def label(self, name, x, y, angle=0):
@@ -238,7 +311,14 @@ class Schematic:
 
     # -- Render to string --
     def render(self):
-        defs = "\n".join(conn_sym_def(n) for n in sorted(self.needed_sizes))
+        defs_list = [conn_sym_def(n) for n in sorted(self.needed_sizes)]
+        # Custom parts are emitted with the library prefix in the symbol
+        # name so they match the lib_id used at the call site.
+        if "ti99-parts:BOB-12009" in self.needed_parts:
+            defs_list.append(bob_12009_symbol(lib_prefix="ti99-parts:"))
+        if "ti99-parts:ESP32-S3-N16R8" in self.needed_parts:
+            defs_list.append(esp32_symbol(lib_prefix="ti99-parts:"))
+        defs = "\n".join(defs_list)
         return (
             f"(kicad_sch\n"
             f"  (version 20260306)\n"
@@ -288,13 +368,16 @@ def build_schematic():
     s = Schematic()
 
     # Footprint library references
-    FP_S22 = "Connector_PinSocket_2.54mm:PinSocket_1x22_P2.54mm_Vertical"
-    FP_S06 = "Connector_PinSocket_2.54mm:PinSocket_1x06_P2.54mm_Vertical"
     FP_H15 = "Connector_PinHeader_2.54mm:PinHeader_1x15_P2.54mm_Vertical"
     FP_H02 = "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
     FP_M04 = ("Connector_Molex:Molex_KK-396_5273-04A_"
              "1x04_P3.96mm_Vertical")
-    FP_H04 = "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
+    # Project-specific footprints (see pcb/lib/ti99-parts.pretty/, generated
+    # by generate_parts.py). The BOB and ESP32 footprints have proper row
+    # spacing baked in; J13 has 2.0mm drill for thick hookup wire.
+    FP_BOB = "ti99-parts:BOB-12009"
+    FP_ESP = "ti99-parts:ESP32-S3-N16R8"
+    FP_J13 = "ti99-parts:J13-CableHeader-1x04"
 
     # ---- Place components ----
     # Signal flow: ESP32 (right) -> BOB LV-side -> BOB HV-side -> TI (left)
@@ -317,11 +400,16 @@ def build_schematic():
     # Placed at the bottom of the schematic in the empty area below all
     # other components. Schematic position has no effect on PCB layout
     # -- you'll position the actual footprints in the PCB editor.
-    j_psu_in  = s.add_conn("J13", 4, 50.80, 130.00, FP_H04, "PWR_TI_IN_CABLE")
+    j_psu_in  = s.add_conn("J13", 4, 50.80, 130.00, FP_J13, "PWR_TI_IN_CABLE")
     j_psu_out = s.add_conn("J14", 4, 86.36, 130.00, FP_M04, "PWR_TI_OUT_MB")
 
     # TI keyboard connector (left, pins face right)
     j_ti = s.add_conn("J10", 15, 35.56, 88.90, FP_H15, "TI_KBD")
+    # J20: parallel 1x15 TI keyboard connector wired pin-1-to-pin-1 with
+    # J10 so an original TI keyboard can plug in alongside the modern
+    # adapter. Each pin shares a net with the corresponding J10 pin via
+    # the same signal label.
+    j_ti2 = s.add_conn("J20", 15, 5.08, 88.90, FP_H15, "TI_KBD_PARALLEL")
 
     # TI signal name annotations (to the left of J_TI)
     ti_signals = [
@@ -346,33 +434,50 @@ def build_schematic():
         s.text(sig, 24.0, py, 1.27)
 
     # Four BOB-12009 modules, stacked vertically between TI (left) and
-    # ESP32 (right). Each module: 2x 1x6 sockets, HV-side on left facing
-    # TI, LV-side on right facing ESP32. Row-to-row spacing within the
-    # physical BOB is 10mm (measured from board).
+    # ESP32 (right). Each BOB is a single multi-unit component:
+    #   unit 1 = LV row (pads  1- 6), placed on the right facing ESP32
+    #   unit 2 = HV row (pads  7-12), placed on the left  facing TI
+    # Both units share one Reference (J1..J4) and one footprint with
+    # 10mm row spacing baked in -- "Update PCB from Schematic" gives one
+    # footprint per BOB at the correct spacing, no manual realignment.
     BOB_X_HV = 87.63
     BOB_X_LV = BOB_X_HV + 10.00
     BOB_Y_START = 40.64
     BOB_Y_STEP = 20.32
 
-    def place_bob(idx, ref_hv, ref_lv, value_hv, value_lv):
+    def place_bob(idx, ref):
         y = BOB_Y_START + idx * BOB_Y_STEP
-        hv = s.add_conn(ref_hv, 6, BOB_X_HV, y, FP_S06, value_hv,
-                        mirror=True, val_pos=(BOB_X_HV + 3.556, y, 90))
-        lv = s.add_conn(ref_lv, 6, BOB_X_LV, y, FP_S06, value_lv,
-                        val_pos=(BOB_X_LV - 3.302, y, 90))
+        lv, hv = s.add_part2(
+            ref=ref,
+            lib_id="ti99-parts:BOB-12009",
+            value="BOB-12009",
+            n_per_unit=6,
+            fp=FP_BOB,
+            x1=BOB_X_LV, y1=y, mirror1=False,           # LV unit on right
+            val_pos1=(BOB_X_LV - 3.302, y, 90),
+            x2=BOB_X_HV, y2=y, mirror2=True,            # HV unit on left
+            val_pos2=(BOB_X_HV + 3.556, y, 90),
+        )
         return hv, lv
 
-    j1_hv, j1_lv = place_bob(0, "J1", "J2", "BOB1_HV", "BOB1_LV")
-    j2_hv, j2_lv = place_bob(1, "J3", "J4", "BOB2_HV", "BOB2_LV")
-    j3_hv, j3_lv = place_bob(2, "J5", "J6", "BOB3_HV", "BOB3_LV")
-    j4_hv, j4_lv = place_bob(3, "J7", "J8", "BOB4_HV", "BOB4_LV")
+    j1_hv, j1_lv = place_bob(0, "J1")
+    j2_hv, j2_lv = place_bob(1, "J2")
+    j3_hv, j3_lv = place_bob(2, "J3")
+    j4_hv, j4_lv = place_bob(3, "J4")
 
-    # ESP32 left header (mirrored: pins face left toward BOBs)
-    # LBGE row-to-row spacing is 25.4mm (10 pitches).
-    j_esp_l = s.add_conn("J11", 22, 151.13, 88.90, FP_S22, "ESP32_Left",
-                         mirror=True)
-    # ESP32 right header (pins face right, all NC, mechanical only)
-    j_esp_r = s.add_conn("J12", 22, 176.53, 88.90, FP_S22, "ESP32_Right")
+    # ESP32-S3-N16R8 dev board as a single multi-unit component.
+    # unit 1 = left header (pads  1-22), placed mirrored facing BOBs
+    # unit 2 = right header (pads 23-44), all NC (mechanical only)
+    # Footprint has 25.4mm row spacing baked in.
+    j_esp_l, j_esp_r = s.add_part2(
+        ref="U1",
+        lib_id="ti99-parts:ESP32-S3-N16R8",
+        value="ESP32-S3-N16R8",
+        n_per_unit=22,
+        fp=FP_ESP,
+        x1=151.13, y1=88.90, mirror1=True,    # left header faces BOBs
+        x2=176.53, y2=88.90, mirror2=False,   # right header faces away
+    )
 
     # ---- Section labels ----
     s.text("TI-99/4A Keyboard Adapter - Carrier Board (BSS138 rev)",
@@ -397,33 +502,33 @@ def build_schematic():
     # +3V3 sources: ESP32 pins 1, 2
     s.pin_glabel(j_esp_l[1], "+3V3", mirror=True)
     s.pin_glabel(j_esp_l[2], "+3V3", mirror=True)
-    # +3V3 sinks: LV rail (socket pin 3) on each BOB LV side
+    # +3V3 sinks: LV rail (socket pin 4) on each BOB LV side
     for lv in (j1_lv, j2_lv, j3_lv, j4_lv):
-        s.pin_glabel(lv[3], "+3V3")
+        s.pin_glabel(lv[4], "+3V3")
 
     # +5V sources: bench-test 2-pin header (J9) AND TI PSU daisy-chain
     # (J13/J14 pin 4). Both feed the same +5V net.
     s.pin_glabel(j_pwr[1], "+5V")
     s.pin_glabel(j_psu_in[4], "+5V")
     s.pin_glabel(j_psu_out[4], "+5V")
-    # +5V sinks: ESP32 5V0 (pin 21), HV rail (socket pin 3) on each BOB HV side
+    # +5V sinks: ESP32 5V0 (pin 21), HV rail (socket pin 4) on each BOB HV side
     s.pin_glabel(j_esp_l[21], "+5V", mirror=True)
     for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
-        s.pin_glabel(hv[3], "+5V", mirror=True)
+        s.pin_glabel(hv[4], "+5V", mirror=True)
 
     # GND sources: bench-test 2-pin header (J9) AND TI PSU daisy-chain
     # (J13/J14 pin 3). Both tie to the same GND net.
     s.pin_glabel(j_pwr[2], "GND")
     s.pin_glabel(j_psu_in[3], "GND")
     s.pin_glabel(j_psu_out[3], "GND")
-    # GND sinks: ESP32 GND; BOB GND is at socket pin 4 on both sides.
+    # GND sinks: ESP32 GND; BOB GND is at socket pin 3 on both sides.
     # (Common ground between LV and HV is essential for the BSS138 to
     # work -- all grounds tie to the same net.)
     s.pin_glabel(j_esp_l[22], "GND", mirror=True)
     for lv in (j1_lv, j2_lv, j3_lv, j4_lv):
-        s.pin_glabel(lv[4], "GND")
+        s.pin_glabel(lv[3], "GND")
     for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
-        s.pin_glabel(hv[4], "GND", mirror=True)
+        s.pin_glabel(hv[3], "GND", mirror=True)
 
     # TI PSU pass-through nets for -5V and +12V (not used by this board,
     # but routed straight from J13 to J14 so the TI mainboard still gets
@@ -445,7 +550,7 @@ def build_schematic():
     #   HV-domain net:  "<signal>"     (BOB HV-side pin + TI pin)
     #
     # Channel-to-socket-pin mapping (same on both LV and HV sides):
-    #   CH1=pin 1, CH2=pin 2, CH3=pin 5, CH4=pin 6
+    #   CH1=pin 6, CH2=pin 5, CH3=pin 2, CH4=pin 1
     #
     # LBGE ESP32-S3 header pin -> GPIO map (left header):
     #   pin 4=GPIO4, 5=GPIO5, 6=GPIO6, 7=GPIO7,
@@ -469,33 +574,39 @@ def build_schematic():
     #   BOB#4 (bottom): GPIO 13-14 (J11 pins 19-20) <-> TI 14-15
     #
     # Channel-to-socket-pin mapping (same on LV and HV sides):
-    #   CH1=pin 1, CH2=pin 2, CH3=pin 5, CH4=pin 6
+    #   CH1=pin 6, CH2=pin 5, CH3=pin 2, CH4=pin 1
 
+    # Each TI pin in a BOB's block wires to the BOB's HV-side pin at the
+    # SAME vertical position, top-to-bottom -- TI block's top pin -> HV4
+    # (top of BOB), then HV3, HV2, HV1 (bottom). This avoids crossing
+    # wires in the schematic. Mapping uses socket pins 1, 2, 5, 6 in
+    # that order (= CH4, CH3, CH2, CH1).
+    #
     # BOB#1: TI 1-4
     bob1_nets = [
-        (4, 1, 1, "INT5"),   # GPIO4 -> CH1 -> TI 1
-        (5, 2, 2, "INT6"),   # GPIO5 -> CH2 -> TI 2
-        (6, 5, 3, "INT8"),   # GPIO6 -> CH3 -> TI 3
-        (7, 6, 4, "INT4"),   # GPIO7 -> CH4 -> TI 4
+        (4, 1, 1, "INT5"),   # GPIO4 -> CH4 (HV4) -> TI 1
+        (5, 2, 2, "INT6"),   # GPIO5 -> CH3 (HV3) -> TI 2
+        (6, 5, 3, "INT8"),   # GPIO6 -> CH2 (HV2) -> TI 3
+        (7, 6, 4, "INT4"),   # GPIO7 -> CH1 (HV1) -> TI 4
     ]
-    # BOB#2: TI 5,7,8,9 (TI 6 Alpha Lock NC, so CH2 jumps from 5 to 7)
+    # BOB#2: TI 5,7,8,9 (TI 6 Alpha Lock NC, so CH3 jumps from 5 to 7)
     bob2_nets = [
-        (8,  1, 5, "INT3"),  # GPIO15 -> CH1 -> TI 5
-        (9,  2, 7, "INT7"),  # GPIO16 -> CH2 -> TI 7
-        (10, 5, 8, "1Y1"),   # GPIO17 -> CH3 -> TI 8
-        (11, 6, 9, "1Y0"),   # GPIO18 -> CH4 -> TI 9
+        (8,  1, 5, "INT3"),  # GPIO15 -> CH4 (HV4) -> TI 5
+        (9,  2, 7, "INT7"),  # GPIO16 -> CH3 (HV3) -> TI 7
+        (10, 5, 8, "1Y1"),   # GPIO17 -> CH2 (HV2) -> TI 8
+        (11, 6, 9, "1Y0"),   # GPIO18 -> CH1 (HV1) -> TI 9
     ]
     # BOB#3: TI 10-13
     bob3_nets = [
-        (15, 1, 10, "INT9"),  # GPIO9  -> CH1 -> TI 10
-        (16, 2, 11, "INT10"), # GPIO10 -> CH2 -> TI 11
-        (17, 5, 12, "2Y0"),   # GPIO11 -> CH3 -> TI 12
-        (18, 6, 13, "2Y1"),   # GPIO12 -> CH4 -> TI 13
+        (15, 1, 10, "INT9"),  # GPIO9  -> CH4 (HV4) -> TI 10
+        (16, 2, 11, "INT10"), # GPIO10 -> CH3 (HV3) -> TI 11
+        (17, 5, 12, "2Y0"),   # GPIO11 -> CH2 (HV2) -> TI 12
+        (18, 6, 13, "2Y1"),   # GPIO12 -> CH1 (HV1) -> TI 13
     ]
-    # BOB#4: TI 14-15 on CH1/CH2; CH3/CH4 unused
+    # BOB#4: TI 14-15 on CH4/CH3; CH2/CH1 unused
     bob4_nets = [
-        (19, 1, 14, "2Y2"),   # GPIO13 -> CH1 -> TI 14
-        (20, 2, 15, "2Y3"),   # GPIO14 -> CH2 -> TI 15
+        (19, 1, 14, "2Y2"),   # GPIO13 -> CH4 (HV4) -> TI 14
+        (20, 2, 15, "2Y3"),   # GPIO14 -> CH3 (HV3) -> TI 15
     ]
 
     for bob_lv, bob_hv, nets in (
@@ -512,6 +623,9 @@ def build_schematic():
             s.pin_label(bob_hv[socket_pin], net_hv, mirror=True)
             s.pin_label(j_ti[ti_pin], net_hv,
                         wire_ext=10.16, label_offset=5.08)
+            # Parallel TI keyboard connector — same net via shared label
+            s.pin_label(j_ti2[ti_pin], net_hv,
+                        wire_ext=10.16, label_offset=5.08)
 
     # ==================================================================
     # NO-CONNECTS
@@ -522,14 +636,18 @@ def build_schematic():
     for p in [3, 14]:
         s.nc(*j_esp_l[p])
 
-    # BOB#4 unused channels: CH3 (socket pin 5) and CH4 (socket pin 6)
+    # BOB#4 unused channels: CH2 (socket pin 5) and CH1 (socket pin 6)
     # on both LV and HV sides
     for p in [5, 6]:
         s.nc(*j4_lv[p])
         s.nc(*j4_hv[p])
 
-    # TI pin 6: Alpha Lock (not connected -- software implementation)
-    s.nc(*j_ti[6])
+    # TI pin 6: Alpha Lock — tied between J10 and J20 only. A parallel TI
+    # keyboard plugged into J20 passes its alpha lock signal through to
+    # J10 (and on to the TI mainboard). The ESP32 does NOT drive this
+    # line — the modern keyboard uses software alpha lock instead.
+    s.pin_label(j_ti[6],  "ALPHA_LOCK", wire_ext=10.16, label_offset=5.08)
+    s.pin_label(j_ti2[6], "ALPHA_LOCK", wire_ext=10.16, label_offset=5.08)
 
     # ESP32 right header: GND on pins 1, 21, 22; rest NC (mechanical only)
     s.pin_glabel(j_esp_r[1], "GND")
@@ -562,8 +680,8 @@ def main():
     print("Next steps:")
     print(f"  1. Open {PROJECT}.kicad_pro in KiCad 10")
     print("  2. Review the schematic. BOB socket pin mapping:")
-    print("     LV side: 1=LV1, 2=LV2, 3=LV(3V3), 4=GND, 5=LV3, 6=LV4")
-    print("     HV side: 1=HV1, 2=HV2, 3=HV(5V),  4=GND, 5=HV3, 6=HV4")
+    print("     LV side: 1=LV4, 2=LV3, 3=GND, 4=LV(3V3), 5=LV2, 6=LV1")
+    print("     HV side: 1=HV4, 2=HV3, 3=GND, 4=HV(5V),  5=HV2, 6=HV1")
     print("     LV and HV nets are intentionally separate ('<sig>_LV' vs '<sig>').")
     print("  3. Press F8 to 'Update PCB from Schematic'")
     print("  4. Place footprints: 4x PinSocket_1x06 pairs at 10mm row spacing")

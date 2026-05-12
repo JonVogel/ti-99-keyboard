@@ -5,7 +5,7 @@
       "Application": "Pcbnew",
       "Version": "10.0.0"
     },
-    "CreationDate": "2026-04-25T13:09:51-05:00"
+    "CreationDate": "2026-05-08T23:19:57-05:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
@@ -14,8 +14,8 @@
       "Revision": "rev?"
     },
     "Size": {
-      "X": 65.45,
-      "Y": 80.05
+      "X": 73.55,
+      "Y": 99.8
     },
     "LayerNumber": 2,
     "BoardThickness": 1.6,
@@ -41,16 +41,6 @@
     {
       "Path": "ti99-kb-adapter-B_Cu.gbr",
       "FileFunction": "Copper,L2,Bot",
-      "FilePolarity": "Positive"
-    },
-    {
-      "Path": "ti99-kb-adapter-F_Paste.gbr",
-      "FileFunction": "SolderPaste,Top",
-      "FilePolarity": "Positive"
-    },
-    {
-      "Path": "ti99-kb-adapter-B_Paste.gbr",
-      "FileFunction": "SolderPaste,Bot",
       "FilePolarity": "Positive"
     },
     {

@@ -5,6 +5,8 @@ build/
 *.elf
 *.map
 _royalaxe_mac_extract/
+__pycache__/
+*.pyc
 
 # KiCad auto-generated working files
 pcb/.history/

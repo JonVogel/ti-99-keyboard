@@ -1,0 +1,210 @@
+(footprint "J13-CableHeader-1x04"
+	(version 20260206)
+	(generator "ti99_parts_gen")
+	(layer "F.Cu")
+	(descr "1x4 0.1in solder header with oversized 2.0mm drill / 3.0mm pad for thick hookup wire (TI PSU daisy-chain cable)")
+	(tags "cable-header thru-hole oversized")
+	(property "Reference" "REF**"
+		(at 0.000 0.000 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 1.00 1.00)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "J13-CableHeader-1x04"
+		(at 0.000 0.000 0)
+		(layer "F.Fab")
+		(effects
+			(font
+				(size 1.00 1.00)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(duplicate_pad_numbers_are_jumpers no)
+	(pad "1" thru_hole rect
+		(at -5.715 0.000)
+		(size 3.00 3.00)
+		(drill 2.00)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+	)
+	(pad "2" thru_hole circle
+		(at -1.905 0.000)
+		(size 3.00 3.00)
+		(drill 2.00)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+	)
+	(pad "3" thru_hole circle
+		(at 1.905 0.000)
+		(size 3.00 3.00)
+		(drill 2.00)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+	)
+	(pad "4" thru_hole circle
+		(at 5.715 0.000)
+		(size 3.00 3.00)
+		(drill 2.00)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+	)
+	(fp_text user "1"
+		(at -5.715 -2.500 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 0.70 0.70)
+				(thickness 0.12)
+			)
+		)
+	)
+	(fp_text user "2"
+		(at -1.905 -2.500 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 0.70 0.70)
+				(thickness 0.12)
+			)
+		)
+	)
+	(fp_text user "3"
+		(at 1.905 -2.500 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 0.70 0.70)
+				(thickness 0.12)
+			)
+		)
+	)
+	(fp_text user "4"
+		(at 5.715 -2.500 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 0.70 0.70)
+				(thickness 0.12)
+			)
+		)
+	)
+	(fp_text user "-5V"
+		(at -5.715 2.500 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 0.60 0.60)
+				(thickness 0.12)
+			)
+		)
+	)
+	(fp_text user "+12V"
+		(at -1.905 2.500 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 0.60 0.60)
+				(thickness 0.12)
+			)
+		)
+	)
+	(fp_text user "GND"
+		(at 1.905 2.500 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 0.60 0.60)
+				(thickness 0.12)
+			)
+		)
+	)
+	(fp_text user "+5V"
+		(at 5.715 2.500 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 0.60 0.60)
+				(thickness 0.12)
+			)
+		)
+	)
+	(fp_line
+		(start -7.715 -3.500)
+		(end 7.715 -3.500)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+	)
+	(fp_line
+		(start 7.715 -3.500)
+		(end 7.715 3.500)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+	)
+	(fp_line
+		(start 7.715 3.500)
+		(end -7.715 3.500)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+	)
+	(fp_line
+		(start -7.715 3.500)
+		(end -7.715 -3.500)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+	)
+	(fp_line
+		(start -8.215 -4.000)
+		(end 8.215 -4.000)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+	)
+	(fp_line
+		(start 8.215 -4.000)
+		(end 8.215 4.000)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+	)
+	(fp_line
+		(start 8.215 4.000)
+		(end -8.215 4.000)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+	)
+	(fp_line
+		(start -8.215 4.000)
+		(end -8.215 -4.000)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+	)
+	(embedded_fonts no)
+)

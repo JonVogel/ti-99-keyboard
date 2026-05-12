@@ -28,10 +28,10 @@ Bench validated 2026-04-20 on a 4-channel BOB: clean push-pull 500Hz (0↔3.3V L
 
 Pin silkscreen layout (confirmed from physical board):
 
-- HV side (one long edge): HV1, HV2, HV, GND, HV3, HV4
-- LV side (other long edge): LV1, LV2, LV, GND, LV3, LV4
+- HV side (one long edge): HV4, HV3, GND, HV, HV2, HV1
+- LV side (other long edge): LV4, LV3, GND, LV, LV2, LV1
 
-GND and rail pins are directly opposite across the board. Rails (HV/LV) are at position 3 of 6 — **not** at the ends. Channels split left/right around the central power pair.
+GND and rail pins are directly opposite across the board (GND at position 3, rails at position 4) — **not** at the ends. Channels split left/right around the central power pair: CH3/CH4 at positions 1–2, CH1/CH2 at positions 5–6.
 
 Row-to-row spacing between LV and HV pin rows is **10.00mm** (measured — not a multiple of 2.54mm). Within each row, pins are 2.54mm pitch.
 
