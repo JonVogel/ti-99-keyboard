@@ -273,13 +273,18 @@ static volatile bool alphaLockActive = false;
 #define HID_KEY_BACKSPACE  0x2A
 #define HID_KEY_TAB        0x2B
 #define HID_KEY_SPACE      0x2C
-#define HID_KEY_MINUS      0x2D
-#define HID_KEY_EQUAL      0x2E
-#define HID_KEY_SEMICOLON  0x33
-#define HID_KEY_COMMA      0x36
-#define HID_KEY_PERIOD     0x37
-#define HID_KEY_SLASH      0x38
-#define HID_KEY_CAPSLOCK   0x39
+#define HID_KEY_MINUS        0x2D
+#define HID_KEY_EQUAL        0x2E
+#define HID_KEY_LEFTBRACKET  0x2F
+#define HID_KEY_RIGHTBRACKET 0x30
+#define HID_KEY_BACKSLASH    0x31
+#define HID_KEY_SEMICOLON    0x33
+#define HID_KEY_APOSTROPHE   0x34
+#define HID_KEY_GRAVE        0x35
+#define HID_KEY_COMMA        0x36
+#define HID_KEY_PERIOD       0x37
+#define HID_KEY_SLASH        0x38
+#define HID_KEY_CAPSLOCK     0x39
 #define HID_KEY_F1         0x3A
 #define HID_KEY_F2         0x3B
 #define HID_KEY_F3         0x3C
@@ -349,14 +354,14 @@ static const TiKeyMapping hidToTi[MAP_SIZE] =
   {5, ROW2},                                           // Enter
   {0xFF, 0}, {0xFF, 0}, {0xFF, 0},                    // Esc, BS, Tab (special)
   {5, ROW1},                                           // Space
-  {0xFF, 0},                                           // Minus (special)
-  {0, ROW0},                                           // Equal
-  {0xFF, 0}, {0xFF, 0}, {0xFF, 0}, {0xFF, 0},         // brackets, etc.
+  {0xFF, 0},                                           // Minus    (punctKeys)
+  {0xFF, 0},                                           // Equal    (punctKeys)
+  {0xFF, 0}, {0xFF, 0}, {0xFF, 0}, {0xFF, 0},         // [ ] \ (punctKeys), #
   {0, ROW1},                                           // Semicolon
-  {0xFF, 0}, {0xFF, 0},                                // apostrophe, grave
+  {0xFF, 0}, {0xFF, 0},                                // ' ` (punctKeys)
   {2, ROW0},                                           // Comma
   {1, ROW0},                                           // Period
-  {0xFF, 0},                                           // Slash (special)
+  {0xFF, 0},                                           // Slash    (punctKeys)
   {0xFF, 0},                                           // Caps Lock (special)
   {0xFF, 0}, {0xFF, 0}, {0xFF, 0}, {0xFF, 0}, {0xFF, 0},  // F1-F5
   {0xFF, 0}, {0xFF, 0}, {0xFF, 0}, {0xFF, 0}, {0xFF, 0},  // F6-F10
@@ -384,11 +389,9 @@ static const SpecialKeyMapping specialKeys[] =
   {HID_KEY_LEFT,      1, ROW5, true, false},  // FCTN+S
   {HID_KEY_RIGHT,     2, ROW5, true, false},  // FCTN+D
   {HID_KEY_ESCAPE,    1, ROW3, true, false},  // FCTN+9 (BACK)
-  {HID_KEY_BACKSPACE, 1, ROW5, true, false},  // FCTN+S (delete)
+  {HID_KEY_BACKSPACE, 1, ROW5, true, false},  // FCTN+S (LEFT)
   {HID_KEY_TAB,       3, ROW3, true, false},  // FCTN+7
-  {HID_KEY_DELETE,    0, ROW7, true, false},  // FCTN+1
-  {HID_KEY_SLASH,     2, ROW2, true, false},  // FCTN+I
-  {HID_KEY_MINUS,     3, ROW2, true, false},  // FCTN+U
+  {HID_KEY_DELETE,    0, ROW7, true, false},  // FCTN+1 (DEL)
   {HID_KEY_F1,        0, ROW7, true, false},  // FCTN+1
   {HID_KEY_F2,        1, ROW7, true, false},  // FCTN+2
   {HID_KEY_F3,        2, ROW7, true, false},  // FCTN+3
@@ -401,6 +404,58 @@ static const SpecialKeyMapping specialKeys[] =
   {HID_KEY_F10,       0, ROW3, true, false},  // FCTN+0
 };
 #define NUM_SPECIAL_KEYS (sizeof(specialKeys) / sizeof(specialKeys[0]))
+
+// ---------------------------------------------------------------------------
+// Shift-dependent punctuation
+// ---------------------------------------------------------------------------
+// US-keyboard punctuation keys whose TI-99/4A production differs between the
+// unshifted and shifted forms — and where the shifted form often needs FCTN
+// (not SHIFT) and a completely different matrix cell. The generic "pass the
+// physical SHIFT through to a base key" rule can't express this, so these
+// keys are resolved here from the live modifier state instead.
+//
+// Each entry gives the TI matrix cell (col + row bitmask) and which TI
+// modifier to add, separately for the unshifted (u*) and shifted (s*) forms.
+//
+// Matrix positions verified against Thierry Nouspikel's TI-99/4A keyboard
+// matrix (unige.ch/.../ti99/keyboard.htm), mapped to this sketch's proven
+// col/row numbering via the working letter/number cells. Notably `/` lives
+// at {col0,ROW0} and `=` at {col5,ROW0} — NOT the other way around.
+//
+// Reference — TI produces:
+//   -  SHIFT+/      _  FCTN+U        =  (base {5,R0})   +  SHIFT+=
+//   /  (base {0,R0}) ?  FCTN+I       ;  (base {0,R1})   :  SHIFT+;
+//   ,  (base {2,R0}) <  SHIFT+,      .  (base {1,R0})   >  SHIFT+.
+//   '  FCTN+O        "  FCTN+P       `  FCTN+C          ~  FCTN+W
+//   [  FCTN+R        {  FCTN+F       ]  FCTN+T          }  FCTN+G
+//   \  FCTN+Z        |  FCTN+A
+#define M_NONE  0
+#define M_SHIFT 1
+#define M_FCTN  2
+
+typedef struct
+{
+  uint8_t hidKey;
+  uint8_t uCol, uRow, uMod;   // unshifted form
+  uint8_t sCol, sRow, sMod;   // shifted form
+} PunctKeyMapping;
+
+static const PunctKeyMapping punctKeys[] =
+{
+  // HID key               unshifted → TI          shifted → TI
+  {HID_KEY_MINUS,        0, ROW0, M_SHIFT,      3, ROW2, M_FCTN },  // -  / _
+  {HID_KEY_EQUAL,        5, ROW0, M_NONE,       5, ROW0, M_SHIFT},  // =  / +
+  {HID_KEY_SEMICOLON,    0, ROW1, M_NONE,       0, ROW1, M_SHIFT},  // ;  / :
+  {HID_KEY_COMMA,        2, ROW0, M_NONE,       2, ROW0, M_SHIFT},  // ,  / <
+  {HID_KEY_PERIOD,       1, ROW0, M_NONE,       1, ROW0, M_SHIFT},  // .  / >
+  {HID_KEY_SLASH,        0, ROW0, M_NONE,       2, ROW2, M_FCTN },  // /  / ?
+  {HID_KEY_APOSTROPHE,   1, ROW2, M_FCTN,       0, ROW2, M_FCTN },  // '  / "
+  {HID_KEY_LEFTBRACKET,  3, ROW6, M_FCTN,       3, ROW5, M_FCTN },  // [  / {
+  {HID_KEY_RIGHTBRACKET, 4, ROW6, M_FCTN,       4, ROW5, M_FCTN },  // ]  / }
+  {HID_KEY_BACKSLASH,    0, ROW4, M_FCTN,       0, ROW5, M_FCTN },  // \  / |
+  {HID_KEY_GRAVE,        2, ROW4, M_FCTN,       1, ROW6, M_FCTN },  // `  / ~
+};
+#define NUM_PUNCT_KEYS (sizeof(punctKeys) / sizeof(punctKeys[0]))
 
 // ---------------------------------------------------------------------------
 // Single-key matrix builder
@@ -416,6 +471,46 @@ static bool buildTiMatrixForKey(uint8_t hidKey,
                                 uint8_t out[6])
 {
   memset(out, 0, 6);
+
+  bool shiftHeld = (modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT)) != 0;
+
+  // Shift-dependent punctuation resolves to its own TI cell + TI modifier
+  // and returns immediately — it must NOT fall through to the generic SHIFT
+  // passthrough below, since a shifted form like "?" is FCTN+I (no SHIFT).
+  if (hidKey != 0)
+  {
+    for (int p = 0; p < NUM_PUNCT_KEYS; p++)
+    {
+      if (punctKeys[p].hidKey == hidKey)
+      {
+        uint8_t col = shiftHeld ? punctKeys[p].sCol : punctKeys[p].uCol;
+        uint8_t row = shiftHeld ? punctKeys[p].sRow : punctKeys[p].uRow;
+        uint8_t mod = shiftHeld ? punctKeys[p].sMod : punctKeys[p].uMod;
+        out[col] |= row;
+        if (mod == M_FCTN)
+        {
+          out[TI_FCTN_COL] |= TI_FCTN_ROW;
+        }
+        else if (mod == M_SHIFT)
+        {
+          out[TI_SHIFT_COL] |= TI_SHIFT_ROW;
+        }
+        // Physical CTRL/ALT still stack on top of the punctuation mapping,
+        // so combos like ALT+= reach FCTN+= (QUIT) and CTRL+= reaches
+        // CTRL+=. Physical SHIFT is NOT re-applied here — it was already
+        // consumed above to select the unshifted vs shifted form.
+        if (modifiers & (HID_MOD_LCTRL | HID_MOD_RCTRL))
+        {
+          out[TI_CTRL_COL] |= TI_CTRL_ROW;
+        }
+        if (modifiers & (HID_MOD_LALT | HID_MOD_RALT))
+        {
+          out[TI_FCTN_COL] |= TI_FCTN_ROW;
+        }
+        return true;
+      }
+    }
+  }
 
   // Modifier passthrough
   if (modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT))
@@ -524,6 +619,61 @@ static void taFlush()
 // Shared HID Report Processing
 // ---------------------------------------------------------------------------
 static uint8_t prevKeys[6] = {0};
+
+// ---------------------------------------------------------------------------
+// TI matrix reverse map (authoritative) — for step-1 (HID→TI) validation
+// ---------------------------------------------------------------------------
+// [col][rowBitIndex] -> TI key name, where rowBitIndex r means ROWr = 1<<r.
+// This is the definitive TI-99/4A matrix (per Thierry Nouspikel), expressed
+// in this sketch's proven col/row numbering. It lets the debug print decode a
+// built keyState[] back into a readable "MODS + keys" label, so the HID→TI
+// translation can be validated straight from the serial monitor without the
+// TI attached or its scan timing in play. col5 rows 5/6/7 are the modifiers
+// and are printed as prefixes, not base keys.
+static const char *const tiCellName[6][8] =
+{
+  /* col0 */ { "/",  ";",     "P",     "0",  "Z",     "A",    "Q",    "1" },
+  /* col1 */ { ".",  "L",     "O",     "9",  "X",     "S",    "W",    "2" },
+  /* col2 */ { ",",  "K",     "I",     "8",  "C",     "D",    "E",    "3" },
+  /* col3 */ { "M",  "J",     "U",     "7",  "V",     "F",    "R",    "4" },
+  /* col4 */ { "N",  "H",     "Y",     "6",  "B",     "G",    "T",    "5" },
+  /* col5 */ { "=",  "SPACE", "ENTER", "-",  "-",     "SHIFT","CTRL", "FCTN" },
+};
+
+// Decode a built TI matrix into a readable label, e.g. "FCTN I", "SHIFT 1",
+// "A", or "(release)". Modifiers (col5 rows 5/6/7) are listed first.
+static void decodeTiMatrix(const volatile uint8_t ks[6], char *buf, size_t buflen)
+{
+  buf[0] = '\0';
+  bool any = false;
+
+  if (ks[5] & TI_FCTN_ROW)  { strncat(buf, "FCTN ",  buflen - strlen(buf) - 1); any = true; }
+  if (ks[5] & TI_CTRL_ROW)  { strncat(buf, "CTRL ",  buflen - strlen(buf) - 1); any = true; }
+  if (ks[5] & TI_SHIFT_ROW) { strncat(buf, "SHIFT ", buflen - strlen(buf) - 1); any = true; }
+
+  for (int c = 0; c < 6; c++)
+  {
+    for (int r = 0; r < 8; r++)
+    {
+      if (c == 5 && (r == 5 || r == 6 || r == 7))
+      {
+        continue;  // modifier bits, already handled
+      }
+      if (ks[c] & (1u << r))
+      {
+        strncat(buf, tiCellName[c][r], buflen - strlen(buf) - 1);
+        strncat(buf, " ", buflen - strlen(buf) - 1);
+        any = true;
+      }
+    }
+  }
+
+  if (!any)
+  {
+    strncpy(buf, "(release)", buflen);
+    buf[buflen - 1] = '\0';
+  }
+}
 
 // Debug helper: convert a HID scancode + effective shift state into a
 // human-readable character (or label) for the matrix debug print.
@@ -754,15 +904,17 @@ void processHidReport(const uint8_t *report, size_t len)
       effectiveShift = true;
     }
 
-    const char *charStr = (primaryKey == 0)
-                            ? "(release)"
-                            : hidKeyToDebugChar(primaryKey, effectiveShift);
+    // Step-1 validation readout: what you typed (HID) -> what the TI will
+    // see (decoded from the built matrix). Read straight from the serial
+    // monitor with or without the TI attached.
+    const char *hidStr = (primaryKey != 0)
+                           ? hidKeyToDebugChar(primaryKey, effectiveShift)
+                           : "(mods)";
+    char tiLabel[40];
+    decodeTiMatrix(keyState, tiLabel, sizeof(tiLabel));
 
-    // Pad the key label to a fixed width so the matrix bytes always
-    // start in the same column. Longest expected label is "(release)"
-    // at 9 characters; everything else is shorter and gets right-padded.
-    Serial.printf("TI key %-9s  C0=%02X C1=%02X C2=%02X C3=%02X C4=%02X C5=%02X  alpha=%d\n",
-                  charStr,
+    Serial.printf("HID %-9s -> TI %-18s  C0=%02X C1=%02X C2=%02X C3=%02X C4=%02X C5=%02X  alpha=%d\n",
+                  hidStr, tiLabel,
                   keyState[0], keyState[1], keyState[2],
                   keyState[3], keyState[4], keyState[5],
                   alphaLockActive ? 1 : 0);
@@ -1008,6 +1160,169 @@ static inline void updateRowOutputs()
 }
 
 // ---------------------------------------------------------------------------
+// Timer-Sampled, Debounced Row Outputs
+// ---------------------------------------------------------------------------
+// A hardware timer samples all six column inputs at a fixed high rate and
+// debounces them: a column must read LOW for MATRIX_DEBOUNCE consecutive
+// samples to count as a genuine strobe. This robustly rejects the ribbon's
+// capacitive coupling transients (a blip lasts only a sample or two, never
+// enough to confirm) while a real ~66us strobe is confirmed within a few
+// samples — comfortably before the ROM samples the rows (~20-50us in).
+//
+// The rows driven are the OR of keyState[] over every CONFIRMED-low column.
+// During a normal scan only one column is confirmed at a time, so this is just
+// that column's rows (no ghosting). During the QUIT/break ROM routine, which
+// deliberately holds two columns low at once, both confirm and their keys
+// combine correctly (an idle column contributes 0). This replaced a reactive
+// column-edge ISR that couldn't tell a coupling blip from a real overlapping
+// strobe without either dropping QUIT or duplicating typed characters.
+//
+// Asymmetric debounce: a column becomes ACTIVE on the first LOW sample (drive
+// the row with almost no latency, so we're valid when the ROM samples), but
+// only DROPS after MATRIX_HIGH_RELEASE consecutive HIGH samples. The release
+// hysteresis is what matters: a single-sample positive coupling blip on the
+// column being held would otherwise reset it mid-strobe and the TI would read
+// release+repress -> duplicate characters. Idle-column transients are harmless
+// regardless since they contribute keyState==0 to the OR.
+#define MATRIX_SAMPLE_US    5
+#define MATRIX_LOW_CONFIRM  1
+#define MATRIX_HIGH_RELEASE 2
+
+static volatile uint8_t currentRowsDriven = 0;
+static uint32_t         rowBit[8]         = {0};  // GPIO bit per row pin
+static uint32_t         colBitMask[6]     = {0};  // GPIO bit per column pin
+static volatile uint8_t colLowCount[6]    = {0};  // consecutive LOW samples
+static volatile uint8_t colHighCount[6]   = {0};  // consecutive HIGH samples
+static volatile bool    colActive[6]      = {false};
+static hw_timer_t      *matrixTimer       = nullptr;
+
+// Configure all row pins as open-drain outputs, released (high-Z), and cache
+// each one's GPIO bit for fast register-level driving. Open-drain means a row
+// is driven LOW by clearing its OUT bit and released (high-Z) by setting it.
+static void configureRowsOpenDrain()
+{
+  for (int r = 0; r < 8; r++)
+  {
+    rowBit[r] = (1u << rowPins[r]);
+    pinMode(rowPins[r], OUTPUT_OPEN_DRAIN);
+    digitalWrite(rowPins[r], HIGH);  // released: high-Z, TI pull-up holds HIGH
+  }
+  currentRowsDriven = 0;
+}
+
+// Apply a desired 8-bit row mask via two direct GPIO register writes. A set
+// bit = drive that row LOW (clear its OUT bit); a clear bit = release to
+// high-Z (set its OUT bit). All row GPIOs are < 32, so one OUT_W1TS/W1TC bank
+// covers them. Skips the writes when nothing changed (the common case).
+static inline void IRAM_ATTR applyRows(uint8_t desired)
+{
+  if (desired == currentRowsDriven)
+  {
+    return;
+  }
+  uint32_t clr = 0, set = 0;
+  for (int r = 0; r < 8; r++)
+  {
+    if (desired & (1u << r))
+    {
+      clr |= rowBit[r];   // drive LOW
+    }
+    else
+    {
+      set |= rowBit[r];   // release HIGH
+    }
+  }
+  REG_WRITE(GPIO_OUT_W1TC_REG, clr);
+  REG_WRITE(GPIO_OUT_W1TS_REG, set);
+  currentRowsDriven = desired;
+}
+
+// Timer ISR: sample all columns, update debounce counters, drive the OR of the
+// keyState of every confirmed-low column.
+static void IRAM_ATTR onMatrixTimer()
+{
+  uint32_t in = REG_READ(GPIO_IN_REG);
+  uint8_t desired = 0;
+  for (int c = 0; c < 6; c++)
+  {
+    if (in & colBitMask[c])                  // HIGH
+    {
+      colLowCount[c] = 0;
+      if (colHighCount[c] < MATRIX_HIGH_RELEASE)
+      {
+        colHighCount[c]++;
+      }
+      if (colHighCount[c] >= MATRIX_HIGH_RELEASE)
+      {
+        colActive[c] = false;                // released after N consecutive highs
+      }
+    }
+    else                                     // LOW
+    {
+      colHighCount[c] = 0;
+      if (colLowCount[c] < MATRIX_LOW_CONFIRM)
+      {
+        colLowCount[c]++;
+      }
+      if (colLowCount[c] >= MATRIX_LOW_CONFIRM)
+      {
+        colActive[c] = true;                 // asserted on the first low sample
+      }
+    }
+    if (colActive[c])
+    {
+      desired |= keyState[c];
+    }
+  }
+  applyRows(desired);
+}
+
+// Start (or resume) the column sampler. Named attachMatrixIsrs for continuity
+// with the callers that arm/disarm the matrix output.
+static void attachMatrixIsrs()
+{
+  configureRowsOpenDrain();
+  for (int c = 0; c < 6; c++)
+  {
+    colBitMask[c]   = (1u << colPins[c]);
+    colLowCount[c]  = 0;
+    colHighCount[c] = 0;
+    colActive[c]    = false;
+  }
+  if (matrixTimer == nullptr)
+  {
+    matrixTimer = timerBegin(1000000);                   // 1 MHz tick
+    timerAttachInterrupt(matrixTimer, &onMatrixTimer);
+    timerAlarm(matrixTimer, MATRIX_SAMPLE_US, true, 0);  // period, autoreload
+  }
+  else
+  {
+    timerStart(matrixTimer);
+  }
+}
+
+// Stop the sampler and tri-state all row lines (used by observe / serial-debug
+// modes so they can drive the pins directly).
+static void detachMatrixIsrs()
+{
+  if (matrixTimer != nullptr)
+  {
+    timerStop(matrixTimer);
+  }
+  for (int c = 0; c < 6; c++)
+  {
+    colLowCount[c]  = 0;
+    colHighCount[c] = 0;
+    colActive[c]    = false;
+  }
+  currentRowsDriven = 0;
+  for (int r = 0; r < 8; r++)
+  {
+    pinMode(rowPins[r], INPUT);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Strobe Observation Mode (passive scope-in-firmware)
 // ---------------------------------------------------------------------------
 // Captures every column-line edge from a real TI with microsecond
@@ -1114,7 +1429,12 @@ static void IRAM_ATTR strobeEdgeIsr(void *arg)
 
 static void strobeObserveStart()
 {
-  // Release any rows we may have been driving so we don't perturb the TI.
+  // Stop the column sampler and release any rows we may have been driving so
+  // we don't perturb the TI while observing.
+  if (matrixTimer != nullptr)
+  {
+    timerStop(matrixTimer);
+  }
   for (int r = 0; r < 8; r++)
   {
     pinMode(rowPins[r], INPUT);
@@ -1165,6 +1485,7 @@ static void strobeObserveStop()
   {
     detachInterrupt(digitalPinToInterrupt(colPins[c]));
   }
+  attachMatrixIsrs();
   Serial.printf("OBSERVE: stopped. (Ring buffer drops: %u)\n",
                 (unsigned)strobeLogDropped);
 }
@@ -1371,6 +1692,10 @@ void processSerialDebug()
     {
       strobeObserveStop();
     }
+    else
+    {
+      attachMatrixIsrs();
+    }
     Serial.println("DEBUG: All pins released. Normal mode.");
     return;
   }
@@ -1378,6 +1703,7 @@ void processSerialDebug()
   // Cycle test mode
   if (input.equalsIgnoreCase("cycle"))
   {
+    detachMatrixIsrs();
     debugMode = true;
     cycleMode = true;
     cyclePinIndex = 0;
@@ -1405,6 +1731,7 @@ void processSerialDebug()
     return;
   }
 
+  detachMatrixIsrs();
   cycleMode = false;
   debugMode = true;
   Serial.printf("DEBUG: Setting pins: %s\n", input.c_str());
@@ -1466,6 +1793,8 @@ void setup()
   Serial.println("BLE: Initializing...");
   bleInit();
 #endif
+
+  attachMatrixIsrs();
 }
 
 void loop()
@@ -1490,7 +1819,8 @@ void loop()
     processTypeAheadBuffer();
 #endif
 
-    updateRowOutputs();
+    // Row outputs are driven by the timer-sampled column scanner
+    // (onMatrixTimer); nothing to do here.
   }
 
   updateLed();
