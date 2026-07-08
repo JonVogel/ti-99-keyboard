@@ -629,7 +629,7 @@
       {
         "filename": "ti99-kb-adapter.kicad_sch",
         "name": "ti99-kb-adapter",
-        "uuid": "00000000-0000-0000-0000-000000000000"
+        "uuid": "36e0e7fa-2a70-4748-9977-a5f3ae469488"
       }
     ],
     "used_designators": "",
@@ -637,8 +637,8 @@
   },
   "sheets": [
     [
-      "31ac766e-e0b1-4bdb-b027-ff7bfb9c6083",
-      "Root"
+      "36e0e7fa-2a70-4748-9977-a5f3ae469488",
+      "ti99-kb-adapter"
     ]
   ],
   "text_variables": {},

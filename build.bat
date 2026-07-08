@@ -21,12 +21,21 @@ set "DEFAULT_PORT=COM5"
 set "ACTION=%~1"
 set "PORT_ARG=%~2"
 
-REM Bare COM-port arg with no action
+REM Bare COM-port arg with no action.
+REM Must start with "COM" AND have a digit at position 3 — otherwise
+REM "compile" (also starts with "com" case-insensitive) gets misread.
 if "!PORT_ARG!"=="" (
   set "FIRST=!ACTION!"
   if /i "!FIRST:~0,3!"=="COM" (
-    set "PORT_ARG=!ACTION!"
-    set "ACTION="
+    set "C4=!FIRST:~3,1!"
+    set "IS_PORT=0"
+    for %%D in (0 1 2 3 4 5 6 7 8 9) do (
+      if "!C4!"=="%%D" set "IS_PORT=1"
+    )
+    if "!IS_PORT!"=="1" (
+      set "PORT_ARG=!ACTION!"
+      set "ACTION="
+    )
   )
 )
 

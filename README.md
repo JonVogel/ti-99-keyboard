@@ -142,10 +142,11 @@ Most keys map directly. Special mappings via the host's Alt key
 | F8 | FCTN+8 (REDO) |
 | F9 | FCTN+9 (BACK) |
 | F10 | FCTN+0 |
-| F11 | (unmapped, reserved) |
+| F11 | Toggle type-ahead buffer on/off |
 | F12 | Enter BLE pairing mode (not forwarded to TI) |
 | / | FCTN+I |
-| - | FCTN+U |
+| - | - |
+| Shift+- | _ |
 
 The F-key shortcuts let you press the standard TI FCTN+digit combos with a
 single key on the modern keyboard, instead of holding Alt and a digit at

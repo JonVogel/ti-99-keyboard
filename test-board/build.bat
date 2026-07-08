@@ -1,5 +1,5 @@
 @echo off
-REM Compile and upload Lines demo to ESP32-S3-USB-OTG
+REM Compile and upload TI-99/4A Adapter Board Test sketch to ESP32-S3
 REM
 REM Usage:
 REM   build.bat                   - compile + upload (default port)
@@ -8,22 +8,34 @@ REM   build.bat upload            - upload only
 REM   build.bat monitor           - serial monitor
 REM   build.bat all               - compile + upload + monitor
 REM
-REM Each form accepts an optional COM port:
+REM Each form accepts an optional COM port (Windows reassigns ports
+REM on every replug):
 REM   build.bat upload  COM23
 REM   build.bat all     COM7
 REM   build.bat         COM5     (compile+upload on COM5)
+REM   build.bat monitor COM4
 
 setlocal enabledelayedexpansion
 
-set "DEFAULT_PORT=COM5"
+set "DEFAULT_PORT=COM11"
 set "ACTION=%~1"
 set "PORT_ARG=%~2"
 
+REM Bare COM-port arg with no action.
+REM Must start with "COM" AND have a digit at position 3 — otherwise
+REM "compile" (also starts with "com" case-insensitive) gets misread.
 if "!PORT_ARG!"=="" (
   set "FIRST=!ACTION!"
   if /i "!FIRST:~0,3!"=="COM" (
-    set "PORT_ARG=!ACTION!"
-    set "ACTION="
+    set "C4=!FIRST:~3,1!"
+    set "IS_PORT=0"
+    for %%D in (0 1 2 3 4 5 6 7 8 9) do (
+      if "!C4!"=="%%D" set "IS_PORT=1"
+    )
+    if "!IS_PORT!"=="1" (
+      set "PORT_ARG=!ACTION!"
+      set "ACTION="
+    )
   )
 )
 
@@ -33,12 +45,12 @@ if "!PORT_ARG!"=="" (
   set "PORT=!PORT_ARG!"
 )
 
-set "FQBN=esp32:esp32:esp32s3"
+set "FQBN=esp32:esp32:esp32s3:PartitionScheme=no_ota,FlashSize=16M,PSRAM=opi"
 set "SKETCH_DIR=%~dp0"
 if "!SKETCH_DIR:~-1!"=="\" set "SKETCH_DIR=!SKETCH_DIR:~0,-1!"
 
 echo.
-echo === build.bat (esp32s3-usb-otg-lcd): action='!ACTION!' port='!PORT!' ===
+echo === build.bat (board test): action='!ACTION!' port='!PORT!' ===
 
 if "!ACTION!"==""           goto compile_upload
 if /i "!ACTION!"=="compile" goto compile
