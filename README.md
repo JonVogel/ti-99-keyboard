@@ -21,8 +21,8 @@ the original keyboard. The original keyboard can optionally run in parallel.
   (Alt+4) to stop a running program
 - Software **Alpha Lock** that fixes the original joystick-UP bug (see below)
 - Optional **parallel original keyboard** — both can drive the matrix at once
-- USB keyboard input via the native USB-OTG port (present in code but currently
-  disabled pending an `EspUsbHost` upstream rewrite)
+- **USB keyboard input** via the native USB-OTG host port (using `EspUsbHost`),
+  usable alongside or instead of BLE
 
 ## Hardware
 
@@ -217,8 +217,8 @@ Lock — matching the original Alpha Lock semantics.
 - **TI-99/4A matrix output:** working on real hardware — typing, SHIFT/CTRL/FCTN,
   full punctuation, QUIT, and CLEAR/BREAK, with the original keyboard usable in
   parallel.
-- **USB keyboard input:** present in code but currently disabled, pending an
-  `EspUsbHost` upstream rewrite.
+- **USB keyboard input:** working — plug a USB keyboard into the ESP32's native
+  USB-OTG port (`EspUsbHost`); runs alongside BLE.
 
 ## License
 

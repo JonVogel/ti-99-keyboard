@@ -52,7 +52,7 @@
 // ---------------------------------------------------------------------------
 // Input Mode Selection — uncomment one or both
 // ---------------------------------------------------------------------------
-// #define INPUT_USB  // TEMP: disabled while EspUsbHost API is being rewritten upstream
+#define INPUT_USB  // USB keyboard via USB-OTG host port (EspUsbHost)
 #define INPUT_BLE
 
 // ---------------------------------------------------------------------------
@@ -110,6 +110,12 @@ static LedState currentLedState = LED_STARTUP;
 static unsigned long ledStateTime = 0;
 static unsigned long keypressTime = 0;
 
+// True while a USB keyboard is enumerated on the host port. EspUsbHost's
+// usbTransferSize goes >0 on enumerate and back to 0 on unplug, so we mirror
+// it each loop. Drives the status LED orange so it's obvious USB is the live
+// input. Stays false when INPUT_USB is compiled out.
+static bool usbInUse = false;
+
 void setLed(uint8_t r, uint8_t g, uint8_t b)
 {
   rgbLedWrite(PIN_LED, r, g, b);
@@ -132,6 +138,14 @@ void updateLed()
   if (now - keypressTime < 100)
   {
     setLed(0, LED_BRIGHTNESS * 3, 0);
+    return;
+  }
+
+  // USB keyboard connected → steady orange, overriding the BLE-driven states
+  // below. (Keypress flash above still wins momentarily for feedback.)
+  if (usbInUse)
+  {
+    setLed(LED_BRIGHTNESS, LED_BRIGHTNESS / 4, 0);
     return;
   }
 
@@ -1809,6 +1823,7 @@ void loop()
   {
 #ifdef INPUT_USB
     usbHost.task();
+    usbInUse = (usbHost.usbTransferSize > 0);
 #endif
 
 #ifdef INPUT_BLE

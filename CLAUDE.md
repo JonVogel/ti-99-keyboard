@@ -32,7 +32,7 @@ Serial monitor uses the UART port — USB CDC On Boot is **Disabled** so the USB
 
 ## Compile-time toggles (top of `ti-99-keyboard.ino`)
 
-- `INPUT_USB` / `INPUT_BLE` — input source(s); either or both. `INPUT_USB` is currently commented out pending an EspUsbHost upstream rewrite.
+- `INPUT_USB` / `INPUT_BLE` — input source(s); either or both. Both enabled by default. USB works via EspUsbHost 1.0.2 (the earlier "pending upstream rewrite" concern was stale — that library version has the `onReceive`/`onKeyboardKey` API the sketch uses). USB keyboard confirmed working on real hardware 2026-07-11, coexisting with BLE. Plug the keyboard into the board's **native USB-OTG port** (not the CH343 UART port used for serial/upload).
 - `ENABLE_TYPE_AHEAD_BUFFER` — IBM-PC-style 16-key buffer. Off by default at runtime; **F11 toggles** it on/off. The compile flag gates the whole feature in case the runtime path misbehaves on real hardware. Breaks hold-to-fire games (Parsec, TI Invaders) — held keys become 40ms pulses, chords are serialized.
 
 ## Hardware
