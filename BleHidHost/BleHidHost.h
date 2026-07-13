@@ -731,6 +731,38 @@ inline void BleHidHost::task()
       }
     }
   }
+
+  // Persistent reconnect scan. Whenever we're NOT in a pairing window and
+  // a saved peer is disconnected, keep the scanner running so a sleeping
+  // keyboard's brief wake-advertisement is caught the instant it appears
+  // and reconnected by address — onResult's _findSlotByAddress path binds
+  // a saved address regardless of pairing mode. Previously scanning ran
+  // only during pairing windows, so sleep/wake reconnects were slow (they
+  // had to wait for a window to overlap the ad) or missed entirely. This
+  // is address-only: unknown devices are ignored, because onResult's
+  // "adopt a new device into a free slot" branch still requires pairing
+  // mode. Once all saved peers are connected, the radio idles.
+  if (!_pairingMode)
+  {
+    bool wantScan = false;
+    for (int i = 0; i < MAX_PEERS; i++)
+    {
+      if (_peers[i].savedAddress.length() > 0 && !_peers[i].connected)
+      {
+        wantScan = true;
+        break;
+      }
+    }
+    NimBLEScan* pScan = NimBLEDevice::getScan();
+    if (wantScan && !pScan->isScanning())
+    {
+      pScan->start(0, false);   // 0 = scan until stopped; onResult stops it on a match
+    }
+    else if (!wantScan && pScan->isScanning())
+    {
+      pScan->stop();
+    }
+  }
 }
 
 // ISR for the BOOT button. Just flag the request — actual BLE work

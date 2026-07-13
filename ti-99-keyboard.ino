@@ -1019,26 +1019,14 @@ static void bleTask()
   BleHidHost::task();
   bleUpdateLedAndState();
 
-  // Auto-rescan watchdog. The L75 (and similar BLE keyboards) re-advertise
-  // only briefly when waking from deep sleep, with haveUUID=0 and no name
-  // in the primary packet — so a saved-address scan window can miss them.
-  // If we're disconnected and not already in pairing mode for >5 s, kick
-  // the host into pairing mode, which uses the name-fallback path and
-  // catches the next advertising burst without needing F12 or a reboot.
-  static uint32_t disconnectAt = 0;
-  if (BleHidHost::isConnected() || BleHidHost::inPairingMode())
-  {
-    disconnectAt = 0;
-  }
-  else if (disconnectAt == 0)
-  {
-    disconnectAt = millis();
-  }
-  else if (millis() - disconnectAt > 5000)
-  {
-    BleHidHost::requestPairingMode();
-    disconnectAt = 0;
-  }
+  // Reconnect after the keyboard sleeps is handled inside BleHidHost by a
+  // persistent background scan that re-binds a saved peer by address the
+  // instant it re-advertises. The old watchdog that forced pairing mode
+  // every 5 s when disconnected was removed: it was only ever needed
+  // because scanning used to run only during pairing windows, and it made
+  // the host chase random nearby HID-looking devices (e.g. a stray "Q35…"
+  // name) instead of quietly waiting for the saved keyboard. New keyboards
+  // still pair with F12.
 }
 
 #endif // INPUT_BLE
