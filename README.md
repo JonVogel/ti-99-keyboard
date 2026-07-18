@@ -70,23 +70,28 @@ drives **six column lines** low one at a time (via a 74LS156, pulled up with 1k�
 and reads **eight row lines** back (into the TMS9901, pulled up with 10kΩ). The
 adapter reads the columns (inputs) and drives the rows (open-drain outputs).
 
+GPIOs below are the **v4 (straight-ribbon) mapping**: the flat ribbon lands
+adapter connector (J10) pin *p* on TI pin 16−*p*, and the firmware pin map
+mirrors to match. (Rev-3 boards used a 180°-twisted ribbon and a different
+GPIO map — see the `v3` git tag.)
+
 | TI pin | Signal | Matrix | ESP32 GPIO | Direction |
 |:------:|--------|--------|:----------:|-----------|
-| 1  | INT5  | row 2 | 4  | ESP32 → TI (drive) |
-| 2  | INT6  | row 3 | 5  | ESP32 → TI (drive) |
-| 3  | INT8  | row 5 | 6  | ESP32 → TI (drive) |
-| 4  | INT4  | row 1 | 7  | ESP32 → TI (drive) |
-| 5  | INT3  | row 0 | 15 | ESP32 → TI (drive) |
-| 6  | P5    | Alpha Lock | — | not connected (software alpha lock) |
-| 7  | INT7  | row 7 | 16 | ESP32 → TI (drive) |
-| 8  | 1Y1   | col 0 | 17 | TI → ESP32 (read) |
-| 9  | 1Y0   | col 4 | 18 | TI → ESP32 (read) |
-| 10 | INT9  | row 6 | 9  | ESP32 → TI (drive) |
-| 11 | INT10 | row 4 | 10 | ESP32 → TI (drive) |
-| 12 | 2Y0   | col 5 | 11 | TI → ESP32 (read) |
-| 13 | 2Y1   | col 1 | 12 | TI → ESP32 (read) |
-| 14 | 2Y2   | col 2 | 13 | TI → ESP32 (read) |
-| 15 | 2Y3   | col 3 | 14 | TI → ESP32 (read) |
+| 1  | INT5  | row 2 | 14 | ESP32 → TI (drive) |
+| 2  | INT6  | row 3 | 13 | ESP32 → TI (drive) |
+| 3  | INT8  | row 5 | 12 | ESP32 → TI (drive) |
+| 4  | INT4  | row 1 | 11 | ESP32 → TI (drive) |
+| 5  | INT3  | row 0 | 10 | ESP32 → TI (drive) |
+| 6  | P5    | Alpha Lock | 9 | wired, never driven (software alpha lock) |
+| 7  | INT7  | row 7 | 8  | ESP32 → TI (drive) |
+| 8  | 1Y1   | col 0 | 18 | TI → ESP32 (read) |
+| 9  | 1Y0   | col 4 | 17 | TI → ESP32 (read) |
+| 10 | INT9  | row 6 | 16 | ESP32 → TI (drive) |
+| 11 | INT10 | row 4 | 15 | ESP32 → TI (drive) |
+| 12 | 2Y0   | col 5 | 7  | TI → ESP32 (read) |
+| 13 | 2Y1   | col 1 | 6  | TI → ESP32 (read) |
+| 14 | 2Y2   | col 2 | 5  | TI → ESP32 (read) |
+| 15 | 2Y3   | col 3 | 4  | TI → ESP32 (read) |
 
 > **Ribbon orientation gotcha:** aftermarket TI keyboard ribbons mark **pin 15**
 > with the red stripe, not pin 1. Verify against the silkscreen before plugging in.

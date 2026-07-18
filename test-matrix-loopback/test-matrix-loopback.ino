@@ -1,27 +1,33 @@
 /*
  * test-matrix-loopback.ino
  * ---------------------------------------------------------------------------
- * Loopback self-test for the 14 matrix GPIOs on the TI-99/4A keyboard
- * adapter's ESP32-S3 module (Hosyond N16R8). Incoming-inspection / post-solder
- * go/no-go for a bare module.
+ * Loopback self-test for the matrix GPIOs on the TI-99/4A keyboard adapter's
+ * ESP32-S3 module (Hosyond N16R8). Incoming-inspection / post-solder go/no-go
+ * for a bare module.
+ *
+ * v4 pin set: all 15 adapter GPIOs (GPIO8 and GPIO9/alpha-lock are in service
+ * on the v4 board) plus the spare GPIO3 to even out the pairing -- 16 pins in
+ * 8 loopback pairs. Labels are v4 roles; for the rev-3 pin set see the `v3`
+ * git tag.
  *
  * WHY THIS EXISTS: an ESD-damaged pin often loses only its INPUT stage while
  * the output driver still works. A drive-only bench check (set pin high/low,
  * scope it) therefore PASSES a bad module. That bit us on a hand-soldered
- * board -- col2 / GPIO13 drove 5V/0V perfectly but read nothing, so every
- * col-2 key was dead. This test exercises BOTH directions on every matrix pin.
+ * board -- GPIO13 drove 5V/0V perfectly but read nothing, so a whole key
+ * column was dead. This test exercises BOTH directions on every pin.
  *
  * FIXTURE: socket the bare ESP32-S3 module (e.g. across a breadboard's centre
- * channel) and jumper the 14 matrix GPIOs into the 7 pairs listed below --
- * one wire per pair. Nothing else required (no BOBs, no adapter, no TI).
+ * channel) and jumper the 16 GPIOs into the 8 pairs listed below -- one wire
+ * per pair. Nothing else required (no BOBs, no adapter, no TI).
  *
- *   GPIO4  (row2/INT5)  <->  GPIO5  (row3/INT6)
- *   GPIO6  (row5/INT8)  <->  GPIO7  (row1/INT4)
- *   GPIO15 (row0/INT3)  <->  GPIO16 (row7/INT7)
- *   GPIO9  (row6/INT9)  <->  GPIO10 (row4/INT10)
- *   GPIO17 (col0)       <->  GPIO18 (col4)
- *   GPIO11 (col5)       <->  GPIO12 (col1)
- *   GPIO13 (col2)       <->  GPIO14 (col3)
+ *   GPIO3  (spare)      <->  GPIO4  (col3/2Y3)
+ *   GPIO5  (col2/2Y2)   <->  GPIO6  (col1/2Y1)
+ *   GPIO7  (col5/2Y0)   <->  GPIO8  (row7/INT7)
+ *   GPIO9  (alpha/P5)   <->  GPIO10 (row0/INT3)
+ *   GPIO11 (row1/INT4)  <->  GPIO12 (row5/INT8)
+ *   GPIO13 (row3/INT6)  <->  GPIO14 (row2/INT5)
+ *   GPIO15 (row4/INT10) <->  GPIO16 (row6/INT9)
+ *   GPIO17 (col4/1Y0)   <->  GPIO18 (col0/1Y1)
  *
  * USE: flash, open serial @115200. It prints a PASS/FAIL table. Socket the
  * next module and press BOOT (or send any serial char) to re-run.
@@ -31,9 +37,9 @@
  *
  * READING A FAIL: each pair is tested both ways. "GPIO_X -> GPIO_Y FAIL" means
  * X could not drive Y OR Y could not read -- i.e. X's OUTPUT or Y's INPUT is
- * bad. The passing opposite direction usually isolates it (e.g. col2's dead
- * input shows as "GPIO14 -> GPIO13 FAIL" while "GPIO13 -> GPIO14" passes ->
- * GPIO13 input). To be certain, re-jumper the suspect pin to a known-good pin.
+ * bad. The passing opposite direction usually isolates it (a dead input shows
+ * as "GPIO_Y -> GPIO_X FAIL" while "GPIO_X -> GPIO_Y" passes -> X's input).
+ * To be certain, re-jumper the suspect pin to a known-good pin.
  */
 
 #include <Arduino.h>
@@ -42,15 +48,16 @@
 
 struct Pair { int a; int b; };
 
-// All 14 matrix GPIOs, grouped into 7 loopback pairs (each pin appears once).
+// All 15 v4 adapter GPIOs + spare GPIO3, in 8 loopback pairs (each pin once).
 static const Pair PAIRS[] = {
-  {  4,  5 },
-  {  6,  7 },
-  { 15, 16 },
+  {  3,  4 },
+  {  5,  6 },
+  {  7,  8 },
   {  9, 10 },
-  { 17, 18 },
   { 11, 12 },
   { 13, 14 },
+  { 15, 16 },
+  { 17, 18 },
 };
 static const int NUM_PAIRS = sizeof(PAIRS) / sizeof(PAIRS[0]);
 
@@ -58,20 +65,22 @@ static const char *labelFor(int gpio)
 {
   switch (gpio)
   {
-    case 4:  return "row2/INT5";
-    case 5:  return "row3/INT6";
-    case 6:  return "row5/INT8";
-    case 7:  return "row1/INT4";
-    case 15: return "row0/INT3";
-    case 16: return "row7/INT7";
-    case 9:  return "row6/INT9";
-    case 10: return "row4/INT10";
-    case 17: return "col0";
-    case 18: return "col4";
-    case 11: return "col5";
-    case 12: return "col1";
-    case 13: return "col2";
-    case 14: return "col3";
+    case 3:  return "spare";
+    case 4:  return "col3/2Y3";
+    case 5:  return "col2/2Y2";
+    case 6:  return "col1/2Y1";
+    case 7:  return "col5/2Y0";
+    case 8:  return "row7/INT7";
+    case 9:  return "alpha/P5";
+    case 10: return "row0/INT3";
+    case 11: return "row1/INT4";
+    case 12: return "row5/INT8";
+    case 13: return "row3/INT6";
+    case 14: return "row2/INT5";
+    case 15: return "row4/INT10";
+    case 16: return "row6/INT9";
+    case 17: return "col4/1Y0";
+    case 18: return "col0/1Y1";
     default: return "?";
   }
 }
@@ -139,7 +148,7 @@ static void runTest()
   Serial.println("----------------------------------------------------------");
   if (allPass)
   {
-    Serial.println(">>> MODULE PASS -- all 14 matrix pins drive AND read.");
+    Serial.println(">>> MODULE PASS -- all 16 pins drive AND read.");
   }
   else
   {

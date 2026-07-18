@@ -206,10 +206,17 @@ void updateLed()
 // now uses the GPIO whose J10 pin mirrors (16-p) to the correct TI pin. It's
 // a pure relabel -- the matrix tables further down are unchanged.
 //
-// Alpha-lock (TI pin 6) is the one exception: it's a passive pass-through
-// with no GPIO, and its mirror pin (10) holds INT9 = row 6 (Q W E R T CTRL).
-// So the v4 PCB swaps the alpha-lock net and the INT9 channel at J10/J20
-// pins 6<->10 -- the only copper change. With that swap INT9 stays on GPIO9.
+// Alpha-lock (TI pin 6, J10 pin 10) is no longer a bare pass-through: the v4
+// board gives it a level-shifter channel and GPIO9, so EVERY TI line is now
+// reachable from firmware -- future re-pinning never needs a new layout. The
+// firmware still never drives it (software alpha lock; driving the line
+// breaks joystick UP), but the copper is there.
+//
+// v4 board channel fabric (GPIO -> BOB channel -> J10 pin), per Jon's map:
+//   BOB1: GPIO4-7   -> CH4..CH1 -> J10 1-4
+//   BOB2: GPIO15-18 -> CH4..CH1 -> J10 5-8
+//   BOB3: GPIO8-11  -> CH4..CH1 -> J10 9-12   (GPIO9 = alpha, J10 10)
+//   BOB4: GPIO12-14 -> CH4..CH2 -> J10 13-15  (CH1 spare)
 //
 // WARNING: do NOT flash this build onto a rev-3 board with a twisted ribbon;
 // the double reversal scrambles the matrix.
@@ -220,17 +227,22 @@ void updateLed()
 #define PIN_ROW_INT8  12   // GPIO12 -> J10 p13 -> TI pin 3
 #define PIN_ROW_INT4  11   // GPIO11 -> J10 p12 -> TI pin 4
 #define PIN_ROW_INT3  10   // GPIO10 -> J10 p11 -> TI pin 5
-#define PIN_ROW_INT7  18   // GPIO18 -> J10 p9  -> TI pin 7
-#define PIN_ROW_INT9   9   // GPIO9  -> J10 p6  -> TI pin 10  (v4 alpha/INT9 swap)
+#define PIN_ROW_INT7   8   // GPIO8  -> J10 p9  -> TI pin 7
+#define PIN_ROW_INT9  16   // GPIO16 -> J10 p6  -> TI pin 10
 #define PIN_ROW_INT10 15   // GPIO15 -> J10 p5  -> TI pin 11
 
 // Column inputs — TI -> ESP32
-#define PIN_COL_1Y1   17   // GPIO17 -> J10 p8  -> TI pin 8  (col 0)
-#define PIN_COL_1Y0   16   // GPIO16 -> J10 p7  -> TI pin 9  (col 4)
+#define PIN_COL_1Y1   18   // GPIO18 -> J10 p8  -> TI pin 8  (col 0)
+#define PIN_COL_1Y0   17   // GPIO17 -> J10 p7  -> TI pin 9  (col 4)
 #define PIN_COL_2Y0    7   // GPIO7  -> J10 p4  -> TI pin 12 (col 5)
 #define PIN_COL_2Y1    6   // GPIO6  -> J10 p3  -> TI pin 13 (col 1)
 #define PIN_COL_2Y2    5   // GPIO5  -> J10 p2  -> TI pin 14 (col 2)
 #define PIN_COL_2Y3    4   // GPIO4  -> J10 p1  -> TI pin 15 (col 3)
+
+// Alpha Lock — wired in v4 (GPIO9 -> J10 p10 -> TI pin 6 / P5) but NEVER
+// driven: kept INPUT for the life of the sketch. Software alpha lock injects
+// SHIFT instead; driving this line breaks joystick UP on unmodified consoles.
+#define PIN_ALPHA_LOCK 9
 
 static const int colPins[6] =
 {
@@ -1176,9 +1188,12 @@ static inline void updateRowOutputs()
     }
   }
 
-  // PIN_ALPHA_LOCK is intentionally never driven. See processHidReport
-  // for the software Alpha Lock implementation. Driving the original
-  // Alpha Lock line breaks joystick UP on unmodified TI-99/4A consoles.
+  // PIN_ALPHA_LOCK is wired (v4: GPIO9 -> J10 p10 -> TI pin 6) but
+  // intentionally never driven -- parked as INPUT for the life of the
+  // sketch. See processHidReport for the software Alpha Lock
+  // implementation. Driving the original Alpha Lock line breaks
+  // joystick UP on unmodified TI-99/4A consoles.
+  pinMode(PIN_ALPHA_LOCK, INPUT);
 }
 
 // ---------------------------------------------------------------------------
@@ -1587,21 +1602,24 @@ static void strobeObserveDrain()
 // monitor to directly drive all 15 TI connector pins. Bit order matches
 // the TI keyboard connector pin numbering:
 //
-//   Bit 1  (leftmost)  = TI pin 1  (INT5,  row, GPIO 4)
-//   Bit 2              = TI pin 2  (INT6,  row, GPIO 5)
-//   Bit 3              = TI pin 3  (INT8,  row, GPIO 6)
-//   Bit 4              = TI pin 4  (INT4,  row, GPIO 7)
-//   Bit 5              = TI pin 5  (INT3,  row, GPIO 15)
-//   Bit 6              = TI pin 6  (P5,    nc — ignored)
-//   Bit 7              = TI pin 7  (INT7,  row, GPIO 16)
-//   Bit 8              = TI pin 8  (1Y1,   col, GPIO 17)
-//   Bit 9              = TI pin 9  (1Y0,   col, GPIO 18)
-//   Bit 10             = TI pin 10 (INT9,  row, GPIO 9)
-//   Bit 11             = TI pin 11 (INT10, row, GPIO 10)
-//   Bit 12             = TI pin 12 (2Y0,   col, GPIO 11)
-//   Bit 13             = TI pin 13 (2Y1,   col, GPIO 12)
-//   Bit 14             = TI pin 14 (2Y2,   col, GPIO 13)
-//   Bit 15 (rightmost) = TI pin 15 (2Y3,   col, GPIO 14)
+// NOTE: "TI pin n" here is the TI MOTHERBOARD pin the signal reaches through
+// the v4 straight ribbon (J10 pin 16-n), not the J10 connector position.
+//
+//   Bit 1  (leftmost)  = TI pin 1  (INT5,  row, GPIO 14)
+//   Bit 2              = TI pin 2  (INT6,  row, GPIO 13)
+//   Bit 3              = TI pin 3  (INT8,  row, GPIO 12)
+//   Bit 4              = TI pin 4  (INT4,  row, GPIO 11)
+//   Bit 5              = TI pin 5  (INT3,  row, GPIO 10)
+//   Bit 6              = TI pin 6  (P5,    alpha lock, GPIO 9)
+//   Bit 7              = TI pin 7  (INT7,  row, GPIO 8)
+//   Bit 8              = TI pin 8  (1Y1,   col, GPIO 18)
+//   Bit 9              = TI pin 9  (1Y0,   col, GPIO 17)
+//   Bit 10             = TI pin 10 (INT9,  row, GPIO 16)
+//   Bit 11             = TI pin 11 (INT10, row, GPIO 15)
+//   Bit 12             = TI pin 12 (2Y0,   col, GPIO 7)
+//   Bit 13             = TI pin 13 (2Y1,   col, GPIO 6)
+//   Bit 14             = TI pin 14 (2Y2,   col, GPIO 5)
+//   Bit 15 (rightmost) = TI pin 15 (2Y3,   col, GPIO 4)
 //
 // A '1' drives the pin LOW (active), a '0' releases it (high-Z / input).
 // Type "off" or "reset" to release all pins and return to normal mode.
@@ -1613,7 +1631,7 @@ static const int debugPinMap[15] =
   PIN_ROW_INT8,   // TI pin 3
   PIN_ROW_INT4,   // TI pin 4
   PIN_ROW_INT3,   // TI pin 5
-  -1,             // TI pin 6  (P5, not connected)
+  PIN_ALPHA_LOCK, // TI pin 6  (P5 / alpha lock -- wired in v4, bench use only)
   PIN_ROW_INT7,   // TI pin 7
   PIN_COL_1Y1,    // TI pin 8
   PIN_COL_1Y0,    // TI pin 9
@@ -1664,7 +1682,8 @@ void processCycleMode()
     prevIndex = (prevIndex == 0) ? 14 : prevIndex - 1;
   }
 
-  // Skip pin 6 (P5, not connected)
+  // Skip any unmapped entry (none in v4 -- alpha lock is wired; kept as a
+  // guard in case a pin is ever unmapped again)
   if (debugPinMap[cyclePinIndex] < 0)
   {
     cyclePinIndex = (cyclePinIndex + 1) % 15;

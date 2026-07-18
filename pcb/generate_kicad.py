@@ -411,32 +411,27 @@ def build_schematic():
     # the same signal label.
     j_ti2 = s.add_conn("J20", 15, 5.08, 88.90, FP_H15, "TI_KBD_PARALLEL")
 
-    # v4 straight-cable fix: the ribbon reverses pin order end-to-end, and the
-    # 14 matrix lines are remapped in firmware to compensate (see the GPIO
-    # remap in ti-99-keyboard.ino). The one line firmware can't move is the
-    # passive ALPHA_LOCK net -- and its mirror pin (10) holds INT9 = row 6.
-    # So swap ONLY those two nets in copper: ALPHA_LOCK -> physical pin 10,
-    # INT9 -> physical pin 6. Every other J10/J20 pin is unchanged. kb_pin()
-    # maps a logical/TI pin number to its physical J10/J20 pin.
-    def kb_pin(ti_pin):
-        if ti_pin == 6:
-            return 10   # ALPHA_LOCK moves to physical pin 10
-        if ti_pin == 10:
-            return 6    # INT9 moves to physical pin 6
-        return ti_pin
+    # v4 straight-cable fix: the flat ribbon lands J10 pin p on TI-motherboard
+    # pin 16-p, so rev 1-3 needed the ribbon twisted 180 degrees. In v4 the
+    # firmware compensates for the mirror on every line (see the GPIO remap in
+    # ti-99-keyboard.ino), and every J10 pin -- including alpha lock -- gets a
+    # level-shifter channel and GPIO, so future re-pinning is firmware-only.
+    # J10 pin 6 carries INT9 and pin 10 carries ALPHA_LOCK: through the flat
+    # ribbon those land on TI-motherboard pins 10 (INT9) and 6 (alpha lock),
+    # which is what puts the passive alpha-lock line where the TI expects it.
 
-    # TI signal name annotations (to the left of J_TI)
+    # Signal name annotations (to the left of J_TI): the net at each J10 pin.
     ti_signals = [
         (1,  "INT5"),
         (2,  "INT6"),
         (3,  "INT8"),
         (4,  "INT4"),
         (5,  "INT3"),
-        (6,  "P5 (Alpha Lock)"),
+        (6,  "INT9"),
         (7,  "INT7"),
         (8,  "1Y1"),
         (9,  "1Y0"),
-        (10, "INT9"),
+        (10, "P5 (Alpha Lock)"),
         (11, "INT10"),
         (12, "2Y0"),
         (13, "2Y1"),
@@ -444,7 +439,7 @@ def build_schematic():
         (15, "2Y3"),
     ]
     for pin, sig in ti_signals:
-        _, py = j_ti[kb_pin(pin)]
+        _, py = j_ti[pin]
         s.text(sig, 24.0, py, 1.27)
 
     # Four BOB-12009 modules, stacked vertically between TI (left) and
@@ -569,58 +564,69 @@ def build_schematic():
     # LBGE ESP32-S3 header pin -> GPIO map (left header):
     #   pin 4=GPIO4, 5=GPIO5, 6=GPIO6, 7=GPIO7,
     #   pin 8=GPIO15, 9=GPIO16, 10=GPIO17, 11=GPIO18,
-    #   pin 15=GPIO9, 16=GPIO10, 17=GPIO11, 18=GPIO12,
+    #   pin 12=GPIO8, pin 15=GPIO9, 16=GPIO10, 17=GPIO11, 18=GPIO12,
     #   pin 19=GPIO13, 20=GPIO14
     #
-    # Format: (esp_pin, socket_pin, ti_pin, signal)
+    # Format: (esp_pin, socket_pin, j10_pin, signal)
 
-    # Channel allocation chosen to avoid trace crossings:
-    # ESP32 GPIOs are sequential top-to-bottom on J11 (pins 4-11, then
-    # a gap at 12-14, then 15-20). TI connector pins are sequential 1-15.
-    # By giving each BOB a contiguous block of GPIOs AND a contiguous
-    # block of TI pins, with BOBs ordered top-to-bottom, every wire
-    # runs straight (no inter-BOB crossings).
+    # v4 channel allocation (straight-through ribbon rework):
+    # ALL 15 J10 pins now get a level-shifter channel and a GPIO --
+    # including alpha lock (J10 pin 10), which rev 1-3 left as a bare
+    # J10<->J20 pass-through. GPIO8 (header pin 12) enters at BOB#3-CH4
+    # and every channel from J10 pin 6 onward shifts over one relative
+    # to rev 3. 15 of 16 channels used; BOB#4-CH1 spare.
     #
-    #   BOB#1 (top):    GPIO 4-7   (J11 pins 4-7)   <-> TI 1-4
-    #   BOB#2:          GPIO 15-18 (J11 pins 8-11)  <-> TI 5,7,8,9
-    #                   (TI 6 = Alpha Lock, NC)
-    #   BOB#3:          GPIO 9-12  (J11 pins 15-18) <-> TI 10-13
-    #   BOB#4 (bottom): GPIO 13-14 (J11 pins 19-20) <-> TI 14-15
+    # Each BOB gets a contiguous block of GPIOs AND a contiguous block
+    # of J10 pins, with BOBs ordered top-to-bottom, so every wire runs
+    # straight (no inter-BOB crossings):
+    #
+    #   BOB#1 (top):    GPIO 4-7   (J11 pins 4-7)     <-> J10 1-4
+    #   BOB#2:          GPIO 15-18 (J11 pins 8-11)    <-> J10 5-8
+    #   BOB#3:          GPIO 8-11  (J11 pins 12,15-17)<-> J10 9-12
+    #   BOB#4 (bottom): GPIO 12-14 (J11 pins 18-20)   <-> J10 13-15
+    #
+    # Net names are J10-local (the signal name at that J10 position).
+    # The straight ribbon lands J10 pin p on TI-motherboard pin 16-p;
+    # firmware compensates by driving each TI function on the GPIO of
+    # the mirrored J10 pin (see the v4 remap in ti-99-keyboard.ino).
+    # J10 pins 6 (INT9) and 10 (ALPHA_LOCK) hold TI pin 10's and TI
+    # pin 6's signals so the passive alpha-lock line lands correctly.
     #
     # Channel-to-socket-pin mapping (same on LV and HV sides):
     #   CH1=pin 6, CH2=pin 5, CH3=pin 2, CH4=pin 1
 
-    # Each TI pin in a BOB's block wires to the BOB's HV-side pin at the
-    # SAME vertical position, top-to-bottom -- TI block's top pin -> HV4
-    # (top of BOB), then HV3, HV2, HV1 (bottom). This avoids crossing
-    # wires in the schematic. Mapping uses socket pins 1, 2, 5, 6 in
-    # that order (= CH4, CH3, CH2, CH1).
+    # Each J10 pin in a BOB's block wires to the BOB's HV-side pin at
+    # the SAME vertical position, top-to-bottom -- block's top pin ->
+    # HV4 (top of BOB), then HV3, HV2, HV1 (bottom). This avoids
+    # crossing wires in the schematic. Mapping uses socket pins
+    # 1, 2, 5, 6 in that order (= CH4, CH3, CH2, CH1).
     #
-    # BOB#1: TI 1-4
+    # BOB#1: J10 1-4
     bob1_nets = [
-        (4, 1, 1, "INT5"),   # GPIO4 -> CH4 (HV4) -> TI 1
-        (5, 2, 2, "INT6"),   # GPIO5 -> CH3 (HV3) -> TI 2
-        (6, 5, 3, "INT8"),   # GPIO6 -> CH2 (HV2) -> TI 3
-        (7, 6, 4, "INT4"),   # GPIO7 -> CH1 (HV1) -> TI 4
+        (4, 1, 1, "INT5"),   # GPIO4 -> CH4 (HV4) -> J10 1
+        (5, 2, 2, "INT6"),   # GPIO5 -> CH3 (HV3) -> J10 2
+        (6, 5, 3, "INT8"),   # GPIO6 -> CH2 (HV2) -> J10 3
+        (7, 6, 4, "INT4"),   # GPIO7 -> CH1 (HV1) -> J10 4
     ]
-    # BOB#2: TI 5,7,8,9 (TI 6 Alpha Lock NC, so CH3 jumps from 5 to 7)
+    # BOB#2: J10 5-8
     bob2_nets = [
-        (8,  1, 5, "INT3"),  # GPIO15 -> CH4 (HV4) -> TI 5
-        (9,  2, 7, "INT7"),  # GPIO16 -> CH3 (HV3) -> TI 7
-        (10, 5, 8, "1Y1"),   # GPIO17 -> CH2 (HV2) -> TI 8
-        (11, 6, 9, "1Y0"),   # GPIO18 -> CH1 (HV1) -> TI 9
+        (8,  1, 5, "INT3"),  # GPIO15 -> CH4 (HV4) -> J10 5
+        (9,  2, 6, "INT9"),  # GPIO16 -> CH3 (HV3) -> J10 6
+        (10, 5, 7, "INT7"),  # GPIO17 -> CH2 (HV2) -> J10 7
+        (11, 6, 8, "1Y1"),   # GPIO18 -> CH1 (HV1) -> J10 8
     ]
-    # BOB#3: TI 10-13
+    # BOB#3: J10 9-12 (alpha lock now a real channel on CH3)
     bob3_nets = [
-        (15, 1, 10, "INT9"),  # GPIO9  -> CH4 (HV4) -> TI 10
-        (16, 2, 11, "INT10"), # GPIO10 -> CH3 (HV3) -> TI 11
-        (17, 5, 12, "2Y0"),   # GPIO11 -> CH2 (HV2) -> TI 12
-        (18, 6, 13, "2Y1"),   # GPIO12 -> CH1 (HV1) -> TI 13
+        (12, 1,  9, "1Y0"),        # GPIO8  -> CH4 (HV4) -> J10 9
+        (15, 2, 10, "ALPHA_LOCK"), # GPIO9  -> CH3 (HV3) -> J10 10
+        (16, 5, 11, "INT10"),      # GPIO10 -> CH2 (HV2) -> J10 11
+        (17, 6, 12, "2Y0"),        # GPIO11 -> CH1 (HV1) -> J10 12
     ]
-    # BOB#4: TI 14-15 on CH4/CH3; CH2/CH1 unused
+    # BOB#4: J10 13-15 on CH4/CH3/CH2; CH1 unused
     bob4_nets = [
-        (19, 1, 14, "2Y2"),   # GPIO13 -> CH4 (HV4) -> TI 14
-        (20, 2, 15, "2Y3"),   # GPIO14 -> CH3 (HV3) -> TI 15
+        (18, 1, 13, "2Y1"),   # GPIO12 -> CH4 (HV4) -> J10 13
+        (19, 2, 14, "2Y2"),   # GPIO13 -> CH3 (HV3) -> J10 14
+        (20, 5, 15, "2Y3"),   # GPIO14 -> CH2 (HV2) -> J10 15
     ]
 
     for bob_lv, bob_hv, nets in (
@@ -629,16 +635,16 @@ def build_schematic():
         (j3_lv, j3_hv, bob3_nets),
         (j4_lv, j4_hv, bob4_nets),
     ):
-        for esp_pin, socket_pin, ti_pin, sig in nets:
+        for esp_pin, socket_pin, j10_pin, sig in nets:
             net_lv = f"{sig}_LV"   # ESP32 -> BOB LV (3V3 domain)
             net_hv = sig           # BOB HV -> TI    (5V domain)
             s.pin_label(j_esp_l[esp_pin], net_lv, mirror=True)
             s.pin_label(bob_lv[socket_pin], net_lv)
             s.pin_label(bob_hv[socket_pin], net_hv, mirror=True)
-            s.pin_label(j_ti[kb_pin(ti_pin)], net_hv,
+            s.pin_label(j_ti[j10_pin], net_hv,
                         wire_ext=10.16, label_offset=5.08)
             # Parallel TI keyboard connector — same net via shared label
-            s.pin_label(j_ti2[kb_pin(ti_pin)], net_hv,
+            s.pin_label(j_ti2[j10_pin], net_hv,
                         wire_ext=10.16, label_offset=5.08)
 
     # ==================================================================
@@ -646,22 +652,20 @@ def build_schematic():
     # ==================================================================
 
     # ESP32 left header: RST (pin 3), GPIO46 (pin 14)
-    # GPIO8 (pin 12) and GPIO3 (pin 13) are usable on LBGE, left open
+    # GPIO3 (pin 13) usable on LBGE, left open. GPIO8 (pin 12) is used
+    # by the v4 fabric (BOB#3-CH4).
     for p in [3, 14]:
         s.nc(*j_esp_l[p])
 
-    # BOB#4 unused channels: CH2 (socket pin 5) and CH1 (socket pin 6)
-    # on both LV and HV sides
-    for p in [5, 6]:
+    # BOB#4 unused channel: CH1 (socket pin 6) on both LV and HV sides
+    for p in [6]:
         s.nc(*j4_lv[p])
         s.nc(*j4_hv[p])
 
-    # TI pin 6: Alpha Lock — tied between J10 and J20 only. A parallel TI
-    # keyboard plugged into J20 passes its alpha lock signal through to
-    # J10 (and on to the TI mainboard). The ESP32 does NOT drive this
-    # line — the modern keyboard uses software alpha lock instead.
-    s.pin_label(j_ti[kb_pin(6)],  "ALPHA_LOCK", wire_ext=10.16, label_offset=5.08)
-    s.pin_label(j_ti2[kb_pin(6)], "ALPHA_LOCK", wire_ext=10.16, label_offset=5.08)
+    # Alpha lock (J10/J20 pin 10) is now a full BOB channel from GPIO9
+    # (see bob3_nets) -- no standalone passive tie anymore. Firmware
+    # parks the GPIO as INPUT; a parallel TI keyboard on J20 still
+    # passes its alpha-lock switch through the shared ALPHA_LOCK net.
 
     # ESP32 right header: GND on pins 1, 21, 22; rest NC (mechanical only)
     s.pin_glabel(j_esp_r[1], "GND")
