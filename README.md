@@ -33,11 +33,29 @@ the original keyboard. The original keyboard can optionally run in parallel.
 | Buck converter (12V→5V) | Power from the TI's 12V rail |
 | TI PSU daisy-chain header — Molex KK-396 4-pin, `09-65-2048` (DigiKey **WM18825-ND**; alt `26-60-4040` / **WM4622-ND**) | Passes the TI's power through the board; the TI mainboard's existing female plug mates here |
 | PSU-side mating plug — Molex `09-50-3041` housing (DigiKey **WM2102-ND**) + 4× `08-50-0106` crimp terminals (DigiKey **WM2300-ND**) | Female plug on the board's power cable that connects to the TI power supply |
-| 15-pin female-to-female ribbon | Connects the adapter's male header to the TI's male keyboard header |
+| 15-pin female-to-female keyboard ribbon (DIY from bulk Dupont parts, ~$1.5–3.5/cable, no crimping — see note below; or ready-made aftermarket TI ribbon, ~$8) | Connects the adapter's male header to the TI's male keyboard header |
 
 The adapter is intended for permanent installation inside a TI-99/4A with the
 original keyboard removed (or run in parallel) and a 3D-printed cover over the
 keyboard opening.
+
+> **Sourcing the keyboard ribbon (cheap DIY):** the cable is a straight 15-way
+> female-to-female run — both the adapter and the TI motherboard expose 1×15 male
+> headers. Instead of a ready-made aftermarket TI ribbon (arcadeshopper, ~$8),
+> build it from bulk commodity Dupont parts for ~$1.5–3.5/cable with **no
+> crimping and no shells to strip**:
+> - **15× female-to-female _no-shell_ pre-crimped 2.54mm leads** per cable —
+>   [AliExpress](https://www.aliexpress.us/item/3256804990855815.html)
+>   (search: *"Dupont 2.54mm female-to-female no-shell pre-crimped jumper wire 40P"*).
+> - **2× 1×15 single-row Dupont female housings** per cable —
+>   [AliExpress](https://www.aliexpress.us/item/3256806021686798.html)
+>   (search: *"Dupont 2.54mm 1x15P housing female single row"*).
+>
+> Slide 15 bare pins into each housing — that's the whole assembly. A genuine
+> Molex 1×15 housing (`50-57-9315`, DigiKey ~$1) also fits, but only accepts Molex
+> crimp terminals — commodity Dupont pins won't lock in it, so stay all-Dupont.
+> AliExpress links rot; the search terms are the durable fallback. Orientation
+> gotcha is noted under the pinout below (red stripe = pin 15).
 
 > **Note:** an earlier revision used TXS0108E auto-direction level shifters. They
 > do **not** work for a keyboard matrix — the auto-direction detector can't

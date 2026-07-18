@@ -114,16 +114,20 @@ After a clean Arduino compile, upload automatically — don't ask first.
 ## PCB history
 
 - **Rev 1 (TXS0108E):** 5 boards from JLCPCB, ~$6.37, ordered 2026-04-12. Superseded — TXS0108E doesn't work for this load (see above).
-- **Rev 2 (BSS138):** 5 boards from JLCPCB, $7.69, ordered 2026-04-25. Replaces TXS0108E with BOB-12009 daughterboards, adds TI PSU daisy-chain (J13/J14) and 4 mounting holes. Gerbers committed to repo.
+- **Rev 2 (BSS138 — superseded):** 5 boards from JLCPCB, $7.69, ordered 2026-04-25. Replaced TXS0108E with BOB-12009 daughterboards, added TI PSU daisy-chain (J13/J14) and 4 mounting holes. **Fab bug: the level-shifter power and GND pins were swapped** — didn't work; fixed in rev 3.
+- **Rev 3 (BSS138 — current, in hand):** corrects the rev-2 power/GND swap and carries the **second parallel 15-pin keyboard connector (J20)**, so an original TI keyboard can run alongside the modern USB/BLE keyboard (shared matrix, either can drive a press). Matrix, typing, and SHIFT/CTRL/FCTN modifiers all work. **Known issue:** the keyboard ribbon must be **twisted 180° (a pin reversal)** to work — see below. Gerbers committed to repo.
 
 Board: 2-layer, all through-hole, no active components. 0.5mm signal and power traces, GND pour on F.Cu and B.Cu, ~65×65mm.
 
-### Rev 3 plan (not yet built)
+### Rev 3 known issues (fixes queued for rev 4)
 
-Add a **second 15-pin keyboard connector footprint in parallel** with the existing one. Same nets, just additional through-holes alongside the rev 2 male header. Lets the user run the original TI keyboard alongside the modern USB/BLE keyboard — both keyboards share the matrix and either can drive a press. Useful for users who want the original tactile keyboard available while still being able to type via USB/BLE for programming.
+**1. Keyboard ribbon needs a 180° twist.** J10 (and the parallel J20) are net-mapped **straight** in `generate_kicad.py` (the `bob1_nets`…`bob4_nets` tables) — physical pin *j* carries TI signal *j*, alpha-lock at pin 6. But the physical header orientation makes a flat ribbon connect **J10 pin *j* → TI-motherboard pin (16−*j*)**, so every line lands reversed and the keyboard is dead. A **180° twist** in the ribbon un-reverses it, which is why the working setup is twisted. Alpha-lock (TI pin 6, ESP32-undriven, tied only to J20) is the asymmetric pin that makes the misorientation obvious — under reversal pin 6 ↔ pin 10.
 
-The new connector will be another 15-pin male header (matching the existing one and the TI's symmetric F/F-ribbon arrangement). Decision deferred to rev 3 fab: physical placement (probably opposite edge from rev 2's connector so the two cables don't fight for space).
+- **Immediate workaround (works on the R3 boards in hand):** build the ribbon as a **reversed / roll-over cable** — connector-A pin *j* → connector-B pin (16−*j*). Bakes the twist in and lies flat. **Label it** — it looks like a normal straight cable but isn't.
+- **Rev 4 candidate:** reverse J10's net-to-pin order in `generate_kicad.py` (physical pin *j* ← signal 16−*j*, which moves alpha-lock to pin 10) so a plain straight cable works. **Resolve first:** whether the parallel J20 (original-keyboard side) must stay TI-standard or mirror J10 — J10 faces the motherboard and J20 faces a keyboard, which are mating opposites, so reversing J10 blindly may just relocate the mirror bug onto J20.
 
-Next: 3D printed enclosure/mount, test fit with real modules, then a larger order if verified.
+**2. J13 daisy-chain solder holes were oversized — fixed in source.** The cable-solder holes were 2.0mm drill / 3.0mm pad (originally cut for 14 AWG), so the thin 18-22 AWG power wire floated with no solid joint. Reduced to **1.1mm drill / 2.2mm pad** in `generate_parts.py` and regenerated `J13-CableHeader-1x04.kicad_mod`. The change is in the source now; it lands physically at the rev-4 fab.
+
+Next: settle the one open ribbon-orientation decision, fab rev 4 with both fixes, then 3D-printed enclosure/mount, test-fit with real modules, and a larger order if verified.
 
 When regenerating the schematic from `generate_kicad.py`, note that KiCad's schematic Y increases downward — pin 1 is at the smallest y. Pin formula: `py = y - fy + (k-1) * 2.54`.
