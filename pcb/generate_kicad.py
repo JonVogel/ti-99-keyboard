@@ -374,7 +374,7 @@ def build_schematic():
              "1x04_P3.96mm_Vertical")
     # Project-specific footprints (see pcb/lib/ti99-parts.pretty/, generated
     # by generate_parts.py). The BOB and ESP32 footprints have proper row
-    # spacing baked in; J13 has 2.0mm drill for thick hookup wire.
+    # spacing baked in; J13 has 1.1mm drill for 18-22 AWG hookup wire.
     FP_BOB = "ti99-parts:BOB-12009"
     FP_ESP = "ti99-parts:ESP32-S3-N16R8"
     FP_J13 = "ti99-parts:J13-CableHeader-1x04"

@@ -528,19 +528,21 @@ def emit_esp32_fp():
 
 
 # ----------------------------------------------------------------------------
-# J13 cable header footprint (oversized 2.0mm drill)
+# J13 cable header footprint (1.1mm drill for 18-22 AWG hookup wire)
 # ----------------------------------------------------------------------------
 
 def emit_j13_cable_header_fp():
-    """1x4 cable-solder header, 5.08mm pitch (wider than 0.1in spec).
+    """1x4 cable-solder header, 3.81mm pitch (wider than 0.1in spec).
 
     No header plugs in here — wires from a pre-built TI PSU cable solder
     directly into the holes — so 0.1in pitch isn't required. Spread to
-    5.08mm so the 3.0mm round pads have ~2.0mm gap between them,
-    leaving plenty of room for solder fillet and avoiding the overlap
-    that the original 2.54mm pitch caused.
+    3.81mm so the pads keep a healthy gap between them, leaving room for
+    a solder fillet and avoiding the overlap the original 2.54mm pitch
+    caused.
 
-    Drill 2.0mm (fits 14 AWG stranded with insulation), pad 3.0mm round.
+    Drill 1.1mm / pad 2.2mm round — sized for the 18-22 AWG hookup wire
+    used on the TI PSU daisy-chain. (Was 2.0mm/3.0mm for 14 AWG, which
+    left the thin power wire floating in the hole with no solid joint.)
     """
     indent = 1
     pitch = 3.81
@@ -550,7 +552,7 @@ def emit_j13_cable_header_fp():
     pads = []
     for i, x in enumerate(xs):
         shape = "rect" if i == 0 else "circle"
-        pads.append(fp_pad(i + 1, x, 0, drill=2.0, pad_dia=3.0,
+        pads.append(fp_pad(i + 1, x, 0, drill=1.1, pad_dia=2.2,
                            indent=indent, shape=shape))
 
     silk = []
@@ -573,9 +575,9 @@ def emit_j13_cable_header_fp():
     return (
         fp_header(
             "J13-CableHeader-1x04",
-            "1x4 0.1in solder header with oversized 2.0mm drill / 3.0mm "
-            "pad for thick hookup wire (TI PSU daisy-chain cable)",
-            "cable-header thru-hole oversized"
+            "1x4 solder header, 3.81mm pitch, 1.1mm drill / 2.2mm pad "
+            "for 18-22 AWG hookup wire (TI PSU daisy-chain cable)",
+            "cable-header thru-hole"
         )
         + "\n" + body + "\n\t(embedded_fonts no)\n)\n"
     )
