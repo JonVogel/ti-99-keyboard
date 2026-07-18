@@ -411,6 +411,20 @@ def build_schematic():
     # the same signal label.
     j_ti2 = s.add_conn("J20", 15, 5.08, 88.90, FP_H15, "TI_KBD_PARALLEL")
 
+    # v4 straight-cable fix: the ribbon reverses pin order end-to-end, and the
+    # 14 matrix lines are remapped in firmware to compensate (see the GPIO
+    # remap in ti-99-keyboard.ino). The one line firmware can't move is the
+    # passive ALPHA_LOCK net -- and its mirror pin (10) holds INT9 = row 6.
+    # So swap ONLY those two nets in copper: ALPHA_LOCK -> physical pin 10,
+    # INT9 -> physical pin 6. Every other J10/J20 pin is unchanged. kb_pin()
+    # maps a logical/TI pin number to its physical J10/J20 pin.
+    def kb_pin(ti_pin):
+        if ti_pin == 6:
+            return 10   # ALPHA_LOCK moves to physical pin 10
+        if ti_pin == 10:
+            return 6    # INT9 moves to physical pin 6
+        return ti_pin
+
     # TI signal name annotations (to the left of J_TI)
     ti_signals = [
         (1,  "INT5"),
@@ -430,7 +444,7 @@ def build_schematic():
         (15, "2Y3"),
     ]
     for pin, sig in ti_signals:
-        _, py = j_ti[pin]
+        _, py = j_ti[kb_pin(pin)]
         s.text(sig, 24.0, py, 1.27)
 
     # Four BOB-12009 modules, stacked vertically between TI (left) and
@@ -621,10 +635,10 @@ def build_schematic():
             s.pin_label(j_esp_l[esp_pin], net_lv, mirror=True)
             s.pin_label(bob_lv[socket_pin], net_lv)
             s.pin_label(bob_hv[socket_pin], net_hv, mirror=True)
-            s.pin_label(j_ti[ti_pin], net_hv,
+            s.pin_label(j_ti[kb_pin(ti_pin)], net_hv,
                         wire_ext=10.16, label_offset=5.08)
             # Parallel TI keyboard connector — same net via shared label
-            s.pin_label(j_ti2[ti_pin], net_hv,
+            s.pin_label(j_ti2[kb_pin(ti_pin)], net_hv,
                         wire_ext=10.16, label_offset=5.08)
 
     # ==================================================================
@@ -646,8 +660,8 @@ def build_schematic():
     # keyboard plugged into J20 passes its alpha lock signal through to
     # J10 (and on to the TI mainboard). The ESP32 does NOT drive this
     # line — the modern keyboard uses software alpha lock instead.
-    s.pin_label(j_ti[6],  "ALPHA_LOCK", wire_ext=10.16, label_offset=5.08)
-    s.pin_label(j_ti2[6], "ALPHA_LOCK", wire_ext=10.16, label_offset=5.08)
+    s.pin_label(j_ti[kb_pin(6)],  "ALPHA_LOCK", wire_ext=10.16, label_offset=5.08)
+    s.pin_label(j_ti2[kb_pin(6)], "ALPHA_LOCK", wire_ext=10.16, label_offset=5.08)
 
     # ESP32 right header: GND on pins 1, 21, 22; rest NC (mechanical only)
     s.pin_glabel(j_esp_r[1], "GND")

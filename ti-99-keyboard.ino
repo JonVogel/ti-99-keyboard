@@ -194,23 +194,43 @@ void updateLed()
 // TXS#2 B-side -> TI: B8=pin10, B7=pin11, B6=pin12, B5=pin13,
 //                      B4=pin14, B3=pin15
 
-// Row outputs — ESP32 -> TI via TXS#1 and TXS#2
-#define PIN_ROW_INT5   4   // TXS#1 A8/B8 -> TI pin 1
-#define PIN_ROW_INT6   5   // TXS#1 A7/B7 -> TI pin 2
-#define PIN_ROW_INT8   6   // TXS#1 A6/B6 -> TI pin 3
-#define PIN_ROW_INT4   7   // TXS#1 A5/B5 -> TI pin 4
-#define PIN_ROW_INT3  15   // TXS#1 A4/B4 -> TI pin 5
-#define PIN_ROW_INT7  16   // TXS#1 A3/B3 -> TI pin 7
-#define PIN_ROW_INT9   9   // TXS#2 A8/B8 -> TI pin 10
-#define PIN_ROW_INT10 10   // TXS#2 A7/B7 -> TI pin 11
+// ---------------------------------------------------------------------------
+// v4 straight-cable GPIO remap  (rev-3 twisted-ribbon baseline is tagged v3)
+// ---------------------------------------------------------------------------
+// The 1x15 keyboard ribbon reverses pin order end-to-end because of the
+// connector orientation (J10 pin p <-> TI-motherboard pin 16-p), so rev 1-3
+// only worked with the ribbon TWISTED 180 degrees. v4 targets a plain
+// STRAIGHT (untwisted) ribbon.
+//
+// The 14 driven/read matrix lines are remapped here in firmware: each signal
+// now uses the GPIO whose J10 pin mirrors (16-p) to the correct TI pin. It's
+// a pure relabel -- the matrix tables further down are unchanged.
+//
+// Alpha-lock (TI pin 6) is the one exception: it's a passive pass-through
+// with no GPIO, and its mirror pin (10) holds INT9 = row 6 (Q W E R T CTRL).
+// So the v4 PCB swaps the alpha-lock net and the INT9 channel at J10/J20
+// pins 6<->10 -- the only copper change. With that swap INT9 stays on GPIO9.
+//
+// WARNING: do NOT flash this build onto a rev-3 board with a twisted ribbon;
+// the double reversal scrambles the matrix.
 
-// Column inputs — TI -> ESP32 via TXS#1 and TXS#2
-#define PIN_COL_1Y1   17   // TXS#1 A2/B2 -> TI pin 8  (col 0)
-#define PIN_COL_1Y0   18   // TXS#1 A1/B1 -> TI pin 9  (col 4)
-#define PIN_COL_2Y0   11   // TXS#2 A6/B6 -> TI pin 12 (col 5)
-#define PIN_COL_2Y1   12   // TXS#2 A5/B5 -> TI pin 13 (col 1)
-#define PIN_COL_2Y2   13   // TXS#2 A4/B4 -> TI pin 14 (col 2)
-#define PIN_COL_2Y3   14   // TXS#2 A3/B3 -> TI pin 15 (col 3)
+// Row outputs — ESP32 -> TI  (GPIO -> J10 pin -> straight ribbon -> TI pin)
+#define PIN_ROW_INT5  14   // GPIO14 -> J10 p15 -> TI pin 1
+#define PIN_ROW_INT6  13   // GPIO13 -> J10 p14 -> TI pin 2
+#define PIN_ROW_INT8  12   // GPIO12 -> J10 p13 -> TI pin 3
+#define PIN_ROW_INT4  11   // GPIO11 -> J10 p12 -> TI pin 4
+#define PIN_ROW_INT3  10   // GPIO10 -> J10 p11 -> TI pin 5
+#define PIN_ROW_INT7  18   // GPIO18 -> J10 p9  -> TI pin 7
+#define PIN_ROW_INT9   9   // GPIO9  -> J10 p6  -> TI pin 10  (v4 alpha/INT9 swap)
+#define PIN_ROW_INT10 15   // GPIO15 -> J10 p5  -> TI pin 11
+
+// Column inputs — TI -> ESP32
+#define PIN_COL_1Y1   17   // GPIO17 -> J10 p8  -> TI pin 8  (col 0)
+#define PIN_COL_1Y0   16   // GPIO16 -> J10 p7  -> TI pin 9  (col 4)
+#define PIN_COL_2Y0    7   // GPIO7  -> J10 p4  -> TI pin 12 (col 5)
+#define PIN_COL_2Y1    6   // GPIO6  -> J10 p3  -> TI pin 13 (col 1)
+#define PIN_COL_2Y2    5   // GPIO5  -> J10 p2  -> TI pin 14 (col 2)
+#define PIN_COL_2Y3    4   // GPIO4  -> J10 p1  -> TI pin 15 (col 3)
 
 static const int colPins[6] =
 {
