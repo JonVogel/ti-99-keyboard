@@ -50,3 +50,6 @@ any dead line's pad and remap that line's `#define` to 14.
   BOB#2 = J10 5–8, BOB#3 = J10 9–12, BOB#4 = J10 13–15.
 - Quick full-column sweep on one row: **Z X C V B** (row4) or **6 7 8 9 0**
   (row3) hits col0–col4; add **Enter** for col5.
+- **J20** (parallel original keyboard) is a functional clone of the TI mb
+  header — the keyboard plugs in straight; J20 pin *j* reaches TI line *j*
+  (its copper runs to J10 pin 16−*j*).

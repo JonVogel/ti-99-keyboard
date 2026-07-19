@@ -97,6 +97,10 @@ A 16th level-shifter channel (GPIO14 → **J15 "SPARE" solder pad**) is wired as
 repair path: if any matrix GPIO or shifter channel dies, jumper J15 to the dead
 line's pad and remap that line's `#define` to GPIO14 — no board respin needed.
 
+The parallel **J20** connector is a functional clone of the TI's own keyboard
+header, so an original TI keyboard plugs into it in its **normal orientation** —
+same as it plugged into the TI motherboard.
+
 > **Ribbon orientation gotcha:** aftermarket TI keyboard ribbons mark **pin 15**
 > with the red stripe, not pin 1. Verify against the silkscreen before plugging in.
 
