@@ -386,6 +386,7 @@ def build_schematic():
     # Footprint library references
     FP_H15 = "Connector_PinHeader_2.54mm:PinHeader_1x15_P2.54mm_Vertical"
     FP_H02 = "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
+    FP_H01 = "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical"
     FP_M04 = ("Connector_Molex:Molex_KK-396_5273-04A_"
              "1x04_P3.96mm_Vertical")
     # Project-specific footprints (see pcb/lib/ti99-parts.pretty/, generated
@@ -426,6 +427,10 @@ def build_schematic():
     # adapter. Each pin shares a net with the corresponding J10 pin via
     # the same signal label.
     j_ti2 = s.add_conn("J20", 15, 5.08, 88.90, FP_H15, "TI_KBD_PARALLEL")
+    # J15: single solder pad for the SPARE repair channel. If any matrix
+    # GPIO or BSS138 channel dies, jumper this pad to the dead line's
+    # pad and remap that line's firmware define to PIN_SPARE.
+    j_spare = s.add_conn("J15", 1, 35.56, 124.46, FP_H01, "SPARE_PAD")
 
     # v4 straight-cable fix: the flat ribbon lands J10 pin p on TI-motherboard
     # pin 16-p, so rev 1-3 needed the ribbon twisted 180 degrees. In v4 the
@@ -588,18 +593,19 @@ def build_schematic():
     # v4 channel allocation (straight-through ribbon rework):
     # ALL 15 J10 pins now get a level-shifter channel and a GPIO --
     # including alpha lock (J10 pin 10), which rev 1-3 left as a bare
-    # J10<->J20 pass-through. GPIO8 (header pin 12) enters at BOB#3-CH4
-    # and every channel from J10 pin 6 onward shifts over one relative
-    # to rev 3. 15 of 16 channels used; BOB#4-CH1 spare.
+    # J10<->J20 pass-through. GPIO8 and GPIO3 (header pins 12/13) enter
+    # the fabric, and all 16 channels are used: 15 keyboard lines plus
+    # the SPARE repair channel (GPIO14 -> BOB#4-CH1 -> J15 solder pad).
     #
     # Each BOB gets a contiguous block of GPIOs AND a contiguous block
     # of J10 pins, with BOBs ordered top-to-bottom, so every wire runs
     # straight (no inter-BOB crossings):
     #
-    #   BOB#1 (top):    GPIO 4-7   (J11 pins 4-7)     <-> J10 1-4
-    #   BOB#2:          GPIO 15-18 (J11 pins 8-11)    <-> J10 5-8
-    #   BOB#3:          GPIO 8-11  (J11 pins 12,15-17)<-> J10 9-12
-    #   BOB#4 (bottom): GPIO 12-14 (J11 pins 18-20)   <-> J10 13-15
+    #   BOB#1 (top):    GPIO 4-7      (J11 pins 4-7)        <-> J10 1-4
+    #   BOB#2:          GPIO 15-18    (J11 pins 8-11)       <-> J10 5-8
+    #   BOB#3:          GPIO 8,3,9,10 (J11 pins 12,13,15,16)<-> J10 9-12
+    #   BOB#4 (bottom): GPIO 11-13    (J11 pins 17-19)      <-> J10 13-15
+    #                   GPIO 14       (J11 pin 20)          <-> SPARE pad J15
     #
     # Net names are J10-local (the signal name at that J10 position).
     # The straight ribbon lands J10 pin p on TI-motherboard pin 16-p;
@@ -631,18 +637,20 @@ def build_schematic():
         (10, 5, 7, "INT7"),  # GPIO17 -> CH2 (HV2) -> J10 7
         (11, 6, 8, "1Y1"),   # GPIO18 -> CH1 (HV1) -> J10 8
     ]
-    # BOB#3: J10 9-12 (alpha lock now a real channel on CH3)
+    # BOB#3: J10 9-12. Alpha lock rides CH3 from GPIO3 -- the strapping
+    # quirk is harmless there: the line is parked as INPUT, never driven,
+    # and the channel pull-up holding it high at boot is benign.
     bob3_nets = [
         (12, 1,  9, "1Y0"),        # GPIO8  -> CH4 (HV4) -> J10 9
-        (15, 2, 10, "ALPHA_LOCK"), # GPIO9  -> CH3 (HV3) -> J10 10
-        (16, 5, 11, "INT10"),      # GPIO10 -> CH2 (HV2) -> J10 11
-        (17, 6, 12, "2Y0"),        # GPIO11 -> CH1 (HV1) -> J10 12
+        (13, 2, 10, "ALPHA_LOCK"), # GPIO3  -> CH3 (HV3) -> J10 10
+        (15, 5, 11, "INT10"),      # GPIO9  -> CH2 (HV2) -> J10 11
+        (16, 6, 12, "2Y0"),        # GPIO10 -> CH1 (HV1) -> J10 12
     ]
-    # BOB#4: J10 13-15 on CH4/CH3/CH2; CH1 unused
+    # BOB#4: J10 13-15 on CH4/CH3/CH2; CH1 = SPARE repair channel (below)
     bob4_nets = [
-        (18, 1, 13, "2Y1"),   # GPIO12 -> CH4 (HV4) -> J10 13
-        (19, 2, 14, "2Y2"),   # GPIO13 -> CH3 (HV3) -> J10 14
-        (20, 5, 15, "2Y3"),   # GPIO14 -> CH2 (HV2) -> J10 15
+        (17, 1, 13, "2Y1"),   # GPIO11 -> CH4 (HV4) -> J10 13
+        (18, 2, 14, "2Y2"),   # GPIO12 -> CH3 (HV3) -> J10 14
+        (19, 5, 15, "2Y3"),   # GPIO13 -> CH2 (HV2) -> J10 15
     ]
 
     for bob_lv, bob_hv, nets in (
@@ -667,18 +675,20 @@ def build_schematic():
     # NO-CONNECTS
     # ==================================================================
 
-    # ESP32 left header: RST (pin 3), GPIO46 (pin 14)
-    # GPIO3 (pin 13) usable on LBGE, left open. GPIO8 (pin 12) is used
-    # by the v4 fabric (BOB#3-CH4).
+    # ESP32 left header: RST (pin 3), GPIO46 (pin 14). Every GPIO
+    # broken out on the left header is now in service.
     for p in [3, 14]:
         s.nc(*j_esp_l[p])
 
-    # BOB#4 unused channel: CH1 (socket pin 6) on both LV and HV sides
-    for p in [6]:
-        s.nc(*j4_lv[p])
-        s.nc(*j4_hv[p])
+    # SPARE repair channel: GPIO14 (header pin 20) -> BOB#4-CH1 -> J15
+    # solder pad. Lets any single dead channel be recovered with one
+    # jumper wire + a firmware remap -- never a new layout.
+    s.pin_label(j_esp_l[20], "SPARE_LV", mirror=True)
+    s.pin_label(j4_lv[6], "SPARE_LV")
+    s.pin_label(j4_hv[6], "SPARE", mirror=True)
+    s.pin_label(j_spare[1], "SPARE", wire_ext=10.16, label_offset=5.08)
 
-    # Alpha lock (J10/J20 pin 10) is now a full BOB channel from GPIO9
+    # Alpha lock (J10/J20 pin 10) is a full BOB channel from GPIO3
     # (see bob3_nets) -- no standalone passive tie anymore. Firmware
     # parks the GPIO as INPUT; a parallel TI keyboard on J20 still
     # passes its alpha-lock switch through the shared ALPHA_LOCK net.

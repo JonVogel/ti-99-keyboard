@@ -26,17 +26,19 @@ the line they share:
 
 | GPIO | TI pin | J10 pin | Row | Keys on this line |
 |:----:|:------:|:-------:|:---:|-------------------|
-| 10 | 5  | 11 | row0 | `/  .  ,  M  N  =` |
-| 11 | 4  | 12 | row1 | `;  L  K  J  H  Space` |
-| 14 | 1  | 15 | row2 | `P  O  I  U  Y  Enter` |
-| 13 | 2  | 14 | row3 | `6  7  8  9  0` |
+| 9  | 5  | 11 | row0 | `/  .  ,  M  N  =` |
+| 10 | 4  | 12 | row1 | `;  L  K  J  H  Space` |
+| 13 | 1  | 15 | row2 | `P  O  I  U  Y  Enter` |
+| 12 | 2  | 14 | row3 | `6  7  8  9  0` |
 | 15 | 11 | 5  | row4 | `Z  X  C  V  B` |
-| 12 | 3  | 13 | row5 | `A  S  D  F  G  SHIFT` |
+| 11 | 3  | 13 | row5 | `A  S  D  F  G  SHIFT` |
 | 16 | 10 | 6  | row6 | `Q  W  E  R  T  CTRL` |
 | 8  | 7  | 9  | row7 | `1  2  3  4  5  FCTN` |
 
-**GPIO9** = Alpha Lock (TI pin 6, J10 pin 10) — wired in v4 but never driven
+**GPIO3** = Alpha Lock (TI pin 6, J10 pin 10) — wired in v4 but never driven
 (software alpha lock); no keys map to it.
+**GPIO14** = SPARE repair channel (BOB#4-CH1 → J15 solder pad) — jumper J15 to
+any dead line's pad and remap that line's `#define` to 14.
 
 ## Notes
 

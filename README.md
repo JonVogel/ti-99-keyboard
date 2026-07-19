@@ -77,12 +77,12 @@ GPIO map — see the `v3` git tag.)
 
 | TI pin | Signal | Matrix | ESP32 GPIO | Direction |
 |:------:|--------|--------|:----------:|-----------|
-| 1  | INT5  | row 2 | 14 | ESP32 → TI (drive) |
-| 2  | INT6  | row 3 | 13 | ESP32 → TI (drive) |
-| 3  | INT8  | row 5 | 12 | ESP32 → TI (drive) |
-| 4  | INT4  | row 1 | 11 | ESP32 → TI (drive) |
-| 5  | INT3  | row 0 | 10 | ESP32 → TI (drive) |
-| 6  | P5    | Alpha Lock | 9 | wired, never driven (software alpha lock) |
+| 1  | INT5  | row 2 | 13 | ESP32 → TI (drive) |
+| 2  | INT6  | row 3 | 12 | ESP32 → TI (drive) |
+| 3  | INT8  | row 5 | 11 | ESP32 → TI (drive) |
+| 4  | INT4  | row 1 | 10 | ESP32 → TI (drive) |
+| 5  | INT3  | row 0 | 9  | ESP32 → TI (drive) |
+| 6  | P5    | Alpha Lock | 3 | wired, never driven (software alpha lock) |
 | 7  | INT7  | row 7 | 8  | ESP32 → TI (drive) |
 | 8  | 1Y1   | col 0 | 18 | TI → ESP32 (read) |
 | 9  | 1Y0   | col 4 | 17 | TI → ESP32 (read) |
@@ -92,6 +92,10 @@ GPIO map — see the `v3` git tag.)
 | 13 | 2Y1   | col 1 | 6  | TI → ESP32 (read) |
 | 14 | 2Y2   | col 2 | 5  | TI → ESP32 (read) |
 | 15 | 2Y3   | col 3 | 4  | TI → ESP32 (read) |
+
+A 16th level-shifter channel (GPIO14 → **J15 "SPARE" solder pad**) is wired as a
+repair path: if any matrix GPIO or shifter channel dies, jumper J15 to the dead
+line's pad and remap that line's `#define` to GPIO14 — no board respin needed.
 
 > **Ribbon orientation gotcha:** aftermarket TI keyboard ribbons mark **pin 15**
 > with the red stripe, not pin 1. Verify against the silkscreen before plugging in.

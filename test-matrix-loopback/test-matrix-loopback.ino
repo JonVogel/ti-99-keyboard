@@ -5,10 +5,10 @@
  * ESP32-S3 module (Hosyond N16R8). Incoming-inspection / post-solder go/no-go
  * for a bare module.
  *
- * v4 pin set: all 15 adapter GPIOs (GPIO8 and GPIO9/alpha-lock are in service
- * on the v4 board) plus the spare GPIO3 to even out the pairing -- 16 pins in
- * 8 loopback pairs. Labels are v4 roles; for the rev-3 pin set see the `v3`
- * git tag.
+ * v4 pin set: all 16 adapter GPIOs are in service on the v4 board -- 15
+ * keyboard lines (including GPIO3 = alpha lock) plus GPIO14 = the SPARE
+ * repair channel -- tested as 8 loopback pairs. Labels are v4 roles; for
+ * the rev-3 pin set see the `v3` git tag.
  *
  * WHY THIS EXISTS: an ESD-damaged pin often loses only its INPUT stage while
  * the output driver still works. A drive-only bench check (set pin high/low,
@@ -20,12 +20,12 @@
  * channel) and jumper the 16 GPIOs into the 8 pairs listed below -- one wire
  * per pair. Nothing else required (no BOBs, no adapter, no TI).
  *
- *   GPIO3  (spare)      <->  GPIO4  (col3/2Y3)
+ *   GPIO3  (alpha/P5)   <->  GPIO4  (col3/2Y3)
  *   GPIO5  (col2/2Y2)   <->  GPIO6  (col1/2Y1)
  *   GPIO7  (col5/2Y0)   <->  GPIO8  (row7/INT7)
- *   GPIO9  (alpha/P5)   <->  GPIO10 (row0/INT3)
- *   GPIO11 (row1/INT4)  <->  GPIO12 (row5/INT8)
- *   GPIO13 (row3/INT6)  <->  GPIO14 (row2/INT5)
+ *   GPIO9  (row0/INT3)  <->  GPIO10 (row1/INT4)
+ *   GPIO11 (row5/INT8)  <->  GPIO12 (row3/INT6)
+ *   GPIO13 (row2/INT5)  <->  GPIO14 (SPARE)
  *   GPIO15 (row4/INT10) <->  GPIO16 (row6/INT9)
  *   GPIO17 (col4/1Y0)   <->  GPIO18 (col0/1Y1)
  *
@@ -65,18 +65,18 @@ static const char *labelFor(int gpio)
 {
   switch (gpio)
   {
-    case 3:  return "spare";
+    case 3:  return "alpha/P5";
     case 4:  return "col3/2Y3";
     case 5:  return "col2/2Y2";
     case 6:  return "col1/2Y1";
     case 7:  return "col5/2Y0";
     case 8:  return "row7/INT7";
-    case 9:  return "alpha/P5";
-    case 10: return "row0/INT3";
-    case 11: return "row1/INT4";
-    case 12: return "row5/INT8";
-    case 13: return "row3/INT6";
-    case 14: return "row2/INT5";
+    case 9:  return "row0/INT3";
+    case 10: return "row1/INT4";
+    case 11: return "row5/INT8";
+    case 12: return "row3/INT6";
+    case 13: return "row2/INT5";
+    case 14: return "SPARE";
     case 15: return "row4/INT10";
     case 16: return "row6/INT9";
     case 17: return "col4/1Y0";

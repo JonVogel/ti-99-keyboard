@@ -213,20 +213,21 @@ void updateLed()
 // breaks joystick UP), but the copper is there.
 //
 // v4 board channel fabric (GPIO -> BOB channel -> J10 pin), per Jon's map:
-//   BOB1: GPIO4-7   -> CH4..CH1 -> J10 1-4
-//   BOB2: GPIO15-18 -> CH4..CH1 -> J10 5-8
-//   BOB3: GPIO8-11  -> CH4..CH1 -> J10 9-12   (GPIO9 = alpha, J10 10)
-//   BOB4: GPIO12-14 -> CH4..CH2 -> J10 13-15  (CH1 spare)
+//   BOB1: GPIO4-7      -> CH4..CH1 -> J10 1-4
+//   BOB2: GPIO15-18    -> CH4..CH1 -> J10 5-8
+//   BOB3: GPIO8,3,9,10 -> CH4..CH1 -> J10 9-12  (GPIO3 = alpha, J10 10)
+//   BOB4: GPIO11-13    -> CH4..CH2 -> J10 13-15
+//         GPIO14       -> CH1      -> SPARE solder pad (J15)
 //
 // WARNING: do NOT flash this build onto a rev-3 board with a twisted ribbon;
 // the double reversal scrambles the matrix.
 
 // Row outputs — ESP32 -> TI  (GPIO -> J10 pin -> straight ribbon -> TI pin)
-#define PIN_ROW_INT5  14   // GPIO14 -> J10 p15 -> TI pin 1
-#define PIN_ROW_INT6  13   // GPIO13 -> J10 p14 -> TI pin 2
-#define PIN_ROW_INT8  12   // GPIO12 -> J10 p13 -> TI pin 3
-#define PIN_ROW_INT4  11   // GPIO11 -> J10 p12 -> TI pin 4
-#define PIN_ROW_INT3  10   // GPIO10 -> J10 p11 -> TI pin 5
+#define PIN_ROW_INT5  13   // GPIO13 -> J10 p15 -> TI pin 1
+#define PIN_ROW_INT6  12   // GPIO12 -> J10 p14 -> TI pin 2
+#define PIN_ROW_INT8  11   // GPIO11 -> J10 p13 -> TI pin 3
+#define PIN_ROW_INT4  10   // GPIO10 -> J10 p12 -> TI pin 4
+#define PIN_ROW_INT3   9   // GPIO9  -> J10 p11 -> TI pin 5
 #define PIN_ROW_INT7   8   // GPIO8  -> J10 p9  -> TI pin 7
 #define PIN_ROW_INT9  16   // GPIO16 -> J10 p6  -> TI pin 10
 #define PIN_ROW_INT10 15   // GPIO15 -> J10 p5  -> TI pin 11
@@ -239,10 +240,17 @@ void updateLed()
 #define PIN_COL_2Y2    5   // GPIO5  -> J10 p2  -> TI pin 14 (col 2)
 #define PIN_COL_2Y3    4   // GPIO4  -> J10 p1  -> TI pin 15 (col 3)
 
-// Alpha Lock — wired in v4 (GPIO9 -> J10 p10 -> TI pin 6 / P5) but NEVER
+// Alpha Lock — wired in v4 (GPIO3 -> J10 p10 -> TI pin 6 / P5) but NEVER
 // driven: kept INPUT for the life of the sketch. Software alpha lock injects
 // SHIFT instead; driving this line breaks joystick UP on unmodified consoles.
-#define PIN_ALPHA_LOCK 9
+// GPIO3 is an S3 strapping pin (JTAG select) -- harmless here precisely
+// because the line is never driven and its boot-time pull-up is benign.
+#define PIN_ALPHA_LOCK 3
+
+// Spare repair channel — GPIO14 -> BOB#4-CH1 -> J15 solder pad. If any
+// matrix GPIO or shifter channel dies, jumper J15 to the dead line's pad
+// and point that line's define here. See PIN_KEY_MAP.md.
+// #define PIN_SPARE 14
 
 static const int colPins[6] =
 {
@@ -1605,12 +1613,12 @@ static void strobeObserveDrain()
 // NOTE: "TI pin n" here is the TI MOTHERBOARD pin the signal reaches through
 // the v4 straight ribbon (J10 pin 16-n), not the J10 connector position.
 //
-//   Bit 1  (leftmost)  = TI pin 1  (INT5,  row, GPIO 14)
-//   Bit 2              = TI pin 2  (INT6,  row, GPIO 13)
-//   Bit 3              = TI pin 3  (INT8,  row, GPIO 12)
-//   Bit 4              = TI pin 4  (INT4,  row, GPIO 11)
-//   Bit 5              = TI pin 5  (INT3,  row, GPIO 10)
-//   Bit 6              = TI pin 6  (P5,    alpha lock, GPIO 9)
+//   Bit 1  (leftmost)  = TI pin 1  (INT5,  row, GPIO 13)
+//   Bit 2              = TI pin 2  (INT6,  row, GPIO 12)
+//   Bit 3              = TI pin 3  (INT8,  row, GPIO 11)
+//   Bit 4              = TI pin 4  (INT4,  row, GPIO 10)
+//   Bit 5              = TI pin 5  (INT3,  row, GPIO 9)
+//   Bit 6              = TI pin 6  (P5,    alpha lock, GPIO 3)
 //   Bit 7              = TI pin 7  (INT7,  row, GPIO 8)
 //   Bit 8              = TI pin 8  (1Y1,   col, GPIO 18)
 //   Bit 9              = TI pin 9  (1Y0,   col, GPIO 17)
