@@ -128,6 +128,6 @@ Board: 2-layer, all through-hole, no active components. 0.5mm signal and power t
 
 **2. J13 daisy-chain solder holes were oversized — fixed in source.** The cable-solder holes were 2.0mm drill / 3.0mm pad (originally cut for 14 AWG), so the thin 18-22 AWG power wire floated with no solid joint. Reduced to **1.1mm drill / 2.2mm pad** in `generate_parts.py` and regenerated `J13-CableHeader-1x04.kicad_mod`. The change is in the source now; it lands physically at the rev-4 fab.
 
-Next: settle the one open ribbon-orientation decision, fab rev 4 with both fixes, then 3D-printed enclosure/mount, test-fit with real modules, and a larger order if verified.
+Next: export rev-4 gerbers and fab. On arrival: loopback-test the modules, build, flash the v4 firmware, verify with a straight ribbon (and J20 with an original keyboard — still bench-unverified). Merge `v4` → `main` once bench-verified, then 3D-printed enclosure/mount and a larger order. (The v4 board layout is fully routed, DRC-clean, and committed — see the `v4` branch.)
 
 When regenerating the schematic from `generate_kicad.py`, note that KiCad's schematic Y increases downward — pin 1 is at the smallest y. Pin formula: `py = y - fy + (k-1) * 2.54`.
