@@ -428,12 +428,10 @@ def build_schematic():
 
     # TI keyboard connector (left, pins face right)
     j_ti = s.add_conn("J10", 15, 35.56, 88.90, FP_H15, "TI_KBD")
-    # J20: parallel 1x15 connector for an original TI keyboard, wired as
-    # a CLONE of the TI motherboard header: J20 pin j = TI signal j
-    # (alpha lock on pin 6), so the keyboard plugs in straight/OEM, same
-    # as it did on the TI and on rev-3. Because v4's J10 nets are
-    # pre-mirrored for the flat ribbon, this makes J20 pin j share a net
-    # with J10 pin 16-j -- a 15-line bus reversal routed on the board.
+    # J20: parallel 1x15 TI keyboard connector wired pin-1-to-pin-1 with
+    # J10 so an original TI keyboard can plug in alongside the modern
+    # adapter. Each pin shares a net with the corresponding J10 pin via
+    # the same signal label.
     j_ti2 = s.add_conn("J20", 15, 5.08, 88.90, FP_H15, "TI_KBD_PARALLEL")
     # J15: single solder pad for the SPARE repair channel. If any matrix
     # GPIO or BSS138 channel dies, jumper this pad to the dead line's
@@ -675,10 +673,8 @@ def build_schematic():
             s.pin_label(bob_hv[socket_pin], net_hv, mirror=True)
             s.pin_label(j_ti[j10_pin], net_hv,
                         wire_ext=10.16, label_offset=5.08)
-            # J20 is TI-pinout-true: the net that reaches TI mb pin
-            # 16-j10_pin (through the flat ribbon) lands on J20 pin
-            # 16-j10_pin, so an original keyboard mates straight.
-            s.pin_label(j_ti2[16 - j10_pin], net_hv,
+            # Parallel TI keyboard connector — same net via shared label
+            s.pin_label(j_ti2[j10_pin], net_hv,
                         wire_ext=10.16, label_offset=5.08)
 
     # ==================================================================
