@@ -344,7 +344,13 @@ def make_project():
         "meta": {"filename": f"{PROJECT}.kicad_pro", "version": 3},
         "board": {
             "design_settings": {
-                "defaults": {"board_outline_line_width": 0.05}
+                "defaults": {"board_outline_line_width": 0.05},
+                # Pre-defined sizes for the PCB editor's toolbar dropdowns.
+                # Regenerating this file overwrites KiCad-saved project
+                # settings, so the board's standard sizes are baked in here
+                # (0.5mm signal/power traces -- see CLAUDE.md).
+                "track_widths": [0.5],
+                "via_dimensions": [{"diameter": 0.8, "drill": 0.4}]
             }
         },
         "schematic": {"meta": {"version": 1}},
@@ -354,7 +360,17 @@ def make_project():
         },
         "net_settings": {
             "meta": {"version": 5},
-            "classes": []
+            "classes": [
+                {
+                    "name": "Default",
+                    "clearance": 0.2,
+                    "track_width": 0.5,
+                    "via_diameter": 0.8,
+                    "via_drill": 0.4,
+                    "wire_width": 6,
+                    "bus_width": 12
+                }
+            ]
         },
         "sheets": [[uid(), "Root"]],
         "text_variables": {}
