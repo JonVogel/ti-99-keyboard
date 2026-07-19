@@ -350,7 +350,13 @@ def make_project():
                 # settings, so the board's standard sizes are baked in here
                 # (0.5mm signal/power traces -- see CLAUDE.md).
                 "track_widths": [0.5],
-                "via_dimensions": [{"diameter": 0.8, "drill": 0.4}]
+                "via_dimensions": [{"diameter": 0.8, "drill": 0.4}],
+                # The generated footprint pin labels are 0.6/0.7mm silk
+                # text; KiCad's default 0.8mm min-text-height constraint
+                # flags all ~100 of them. They print fine at JLCPCB
+                # (verified on the fabbed rev-2/3 boards), so relax the
+                # constraint to match reality.
+                "rules": {"min_text_height": 0.6}
             }
         },
         "schematic": {"meta": {"version": 1}},
