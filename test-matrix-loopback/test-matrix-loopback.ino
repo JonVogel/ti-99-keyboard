@@ -16,18 +16,24 @@
  * board -- GPIO13 drove 5V/0V perfectly but read nothing, so a whole key
  * column was dead. This test exercises BOTH directions on every pin.
  *
- * FIXTURE: socket the bare ESP32-S3 module (e.g. across a breadboard's centre
- * channel) and jumper the 16 GPIOs into the 8 pairs listed below -- one wire
- * per pair. Nothing else required (no BOBs, no adapter, no TI).
+ * FIXTURE, bare module: socket the ESP32-S3 (e.g. across a breadboard's
+ * centre channel) and jumper the 16 GPIOs into the 8 pairs below -- one
+ * wire per pair.
  *
- *   GPIO3  (alpha/P5)   <->  GPIO4  (col3/2Y3)
- *   GPIO5  (col2/2Y2)   <->  GPIO6  (col1/2Y1)
- *   GPIO7  (col5/2Y0)   <->  GPIO8  (row7/INT7)
- *   GPIO9  (row0/INT3)  <->  GPIO10 (row1/INT4)
- *   GPIO11 (row5/INT8)  <->  GPIO12 (row3/INT6)
- *   GPIO13 (row2/INT5)  <->  GPIO14 (SPARE)
- *   GPIO15 (row4/INT10) <->  GPIO16 (row6/INT9)
- *   GPIO17 (col4/1Y0)   <->  GPIO18 (col0/1Y1)
+ * FIXTURE, assembled v4 board (tests the ENTIRE path -- solder joints,
+ * sockets, carrier traces, and both BSS138 FETs of every BOB channel):
+ * the pairs land on ADJACENT J10 pins, so the whole fixture is seven
+ * 2.54mm shunt jumpers pushed onto J10 pins 1-14 plus ONE wire from
+ * J10 pin 15 to the J15 SPARE pad. Board powered via module USB.
+ *
+ *   GPIO4  (col3/2Y3)   <->  GPIO5  (col2/2Y2)    = J10 1-2   (shunt)
+ *   GPIO6  (col1/2Y1)   <->  GPIO7  (col5/2Y0)    = J10 3-4   (shunt)
+ *   GPIO15 (row4/INT10) <->  GPIO16 (row6/INT9)   = J10 5-6   (shunt)
+ *   GPIO17 (col4/1Y0)   <->  GPIO18 (col0/1Y1)    = J10 7-8   (shunt)
+ *   GPIO8  (row7/INT7)  <->  GPIO3  (alpha/P5)    = J10 9-10  (shunt)
+ *   GPIO9  (row0/INT3)  <->  GPIO10 (row1/INT4)   = J10 11-12 (shunt)
+ *   GPIO11 (row5/INT8)  <->  GPIO12 (row3/INT6)   = J10 13-14 (shunt)
+ *   GPIO13 (row2/INT5)  <->  GPIO14 (SPARE)       = J10 15 <-> J15 (wire)
  *
  * USE: flash, open serial @115200. It prints a PASS/FAIL table. Socket the
  * next module and press BOOT (or send any serial char) to re-run.
@@ -48,16 +54,18 @@
 
 struct Pair { int a; int b; };
 
-// All 15 v4 adapter GPIOs + spare GPIO3, in 8 loopback pairs (each pin once).
+// All 16 v4 fabric GPIOs in 8 loopback pairs (each pin once). Pair order
+// follows J10 pin order so an assembled board is jumpered with shunts
+// straight down the J10 header (see FIXTURE above).
 static const Pair PAIRS[] = {
-  {  3,  4 },
-  {  5,  6 },
-  {  7,  8 },
-  {  9, 10 },
-  { 11, 12 },
-  { 13, 14 },
-  { 15, 16 },
-  { 17, 18 },
+  {  4,  5 },   // J10 1-2
+  {  6,  7 },   // J10 3-4
+  { 15, 16 },   // J10 5-6
+  { 17, 18 },   // J10 7-8
+  {  8,  3 },   // J10 9-10
+  {  9, 10 },   // J10 11-12
+  { 11, 12 },   // J10 13-14
+  { 13, 14 },   // J10 15 <-> J15 SPARE pad
 };
 static const int NUM_PAIRS = sizeof(PAIRS) / sizeof(PAIRS[0]);
 
