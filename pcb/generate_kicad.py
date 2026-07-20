@@ -104,6 +104,31 @@ def conn_sym_def(n):
 
 
 # ---------------------------------------------------------------------------
+# Mounting-hole symbol (pinless mechanical part)
+# ---------------------------------------------------------------------------
+def mounting_hole_sym_def():
+    return (
+        '    (symbol "Mechanical:MountingHole"\n'
+        "      (pin_names (offset 1.016))\n"
+        "      (exclude_from_sim yes) (in_bom no) (on_board yes)\n"
+        '      (property "Reference" "H" (at 0 5.08 0)\n'
+        "        (effects (font (size 1.27 1.27))))\n"
+        '      (property "Value" "MountingHole" (at 0 3.05 0)\n'
+        "        (effects (font (size 1.27 1.27))))\n"
+        '      (property "Footprint" "" (at 0 0 0)\n'
+        "        (effects (font (size 1.27 1.27)) (hide yes)))\n"
+        '      (property "Datasheet" "~" (at 0 0 0)\n'
+        "        (effects (font (size 1.27 1.27)) (hide yes)))\n"
+        '      (symbol "MountingHole_0_1"\n'
+        "        (circle (center 0 0) (radius 1.27)\n"
+        "          (stroke (width 0.508) (type default))\n"
+        "          (fill (type none)))\n"
+        "      )\n"
+        "    )"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Schematic builder
 # ---------------------------------------------------------------------------
 class Schematic:
@@ -171,6 +196,32 @@ class Schematic:
             f"  )"
         )
         return pin_pos
+
+    # -- Add a mounting hole (pinless mechanical footprint, no nets) --
+    def add_mounting_hole(self, ref, x, y):
+        self.needed_parts.add("Mechanical:MountingHole")
+        self.components.append(
+            f"  (symbol\n"
+            f'    (lib_id "Mechanical:MountingHole")\n'
+            f"    (at {x:.2f} {y:.2f} 0)\n"
+            f"    (unit 1)\n"
+            f"    (exclude_from_sim yes) (in_bom no) (on_board yes) (dnp no)\n"
+            f'    (uuid "{uid()}")\n'
+            f'    (property "Reference" "{ref}" (at {x:.2f} {y - 3.81:.2f} 0)\n'
+            f"      (effects (font (size 1.27 1.27))))\n"
+            f'    (property "Value" "MountingHole_2.2mm_M2" (at {x:.2f} {y + 3.81:.2f} 0)\n'
+            f"      (effects (font (size 1.27 1.27))))\n"
+            f'    (property "Footprint" "MountingHole:MountingHole_2.2mm_M2" (at 0 0 0)\n'
+            f"      (effects (font (size 1.27 1.27)) (hide yes)))\n"
+            f'    (property "Datasheet" "~" (at 0 0 0)\n'
+            f"      (effects (font (size 1.27 1.27)) (hide yes)))\n"
+            f"    (instances\n"
+            f'      (project "{PROJECT}"\n'
+            f'        (path "/{self.sheet_uuid}" (reference "{ref}") (unit 1))\n'
+            f"      )\n"
+            f"    )\n"
+            f"  )"
+        )
 
     # -- Add a 2-unit multi-part symbol (e.g. BOB-12009, ESP32-S3-N16R8) --
     def add_part2(self, ref, lib_id, value, n_per_unit, fp,
@@ -318,6 +369,8 @@ class Schematic:
             defs_list.append(bob_12009_symbol(lib_prefix="ti99-parts:"))
         if "ti99-parts:ESP32-S3-N16R8" in self.needed_parts:
             defs_list.append(esp32_symbol(lib_prefix="ti99-parts:"))
+        if "Mechanical:MountingHole" in self.needed_parts:
+            defs_list.append(mounting_hole_sym_def())
         defs = "\n".join(defs_list)
         return (
             f"(kicad_sch\n"
@@ -418,8 +471,9 @@ def build_schematic():
     #      0.1" header footprint is used as solder pads for hookup wire.
     # J14: 4-pin Molex KK-396 male header. The TI mainboard's existing
     #      female plug mates here. Adapter sits inline between PSU and
-    #      MB; pins 1 and 2 pass straight through, pins 3 (GND) and 4
-    #      (+5V) tap into the board's internal power nets.
+    #      MB. NOTE: J14 is MIRROR-wired relative to J13 (1<->4, 2<->3)
+    #      so the keyed MB plug mates in its natural orientation -- see
+    #      the passthrough-mirror explanation in the POWER NETS section.
     # Placed at the bottom of the schematic in the empty area below all
     # other components. Schematic position has no effect on PCB layout
     # -- you'll position the actual footprints in the PCB editor.
@@ -437,6 +491,18 @@ def build_schematic():
     # GPIO or BSS138 channel dies, jumper this pad to the dead line's
     # pad and remap that line's firmware define to PIN_SPARE.
     j_spare = s.add_conn("J15", 1, 35.56, 124.46, FP_H01, "SPARE_PAD")
+
+    # Mounting holes (2.2mm / M2, self-tapping into the printed mount).
+    # In the schematic so F8 owns them -- they can never be silently
+    # dropped by "delete footprints with no symbols" again. Migrating an
+    # existing board: rename its board-only hole footprints (UL/UR/LL/LR)
+    # to H1-H4, untick "Not in schematic" on each, and run F8 with
+    # "re-link footprints to symbols by reference" checked -- the holes
+    # are adopted in place, positions preserved.
+    for i, (hx, hy) in enumerate(
+            [(20.32, 142.24), (30.48, 142.24),
+             (40.64, 142.24), (50.80, 142.24)], start=1):
+        s.add_mounting_hole(f"H{i}", hx, hy)
 
     # v4 straight-cable fix: the flat ribbon lands J10 pin p on TI-motherboard
     # pin 16-p, so rev 1-3 needed the ribbon twisted 180 degrees. In v4 the
@@ -543,20 +609,20 @@ def build_schematic():
         s.pin_glabel(lv[4], "+3V3")
 
     # +5V sources: bench-test 2-pin header (J9) AND TI PSU daisy-chain
-    # (J13/J14 pin 4). Both feed the same +5V net.
+    # (J13 pin 4 / J14 pin 1 -- J14 is MIRROR-wired, see below).
     s.pin_glabel(j_pwr[1], "+5V")
     s.pin_glabel(j_psu_in[4], "+5V")
-    s.pin_glabel(j_psu_out[4], "+5V")
+    s.pin_glabel(j_psu_out[1], "+5V")
     # +5V sinks: ESP32 5V0 (pin 21), HV rail (socket pin 4) on each BOB HV side
     s.pin_glabel(j_esp_l[21], "+5V", mirror=True)
     for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
         s.pin_glabel(hv[4], "+5V", mirror=True)
 
     # GND sources: bench-test 2-pin header (J9) AND TI PSU daisy-chain
-    # (J13/J14 pin 3). Both tie to the same GND net.
+    # (J13 pin 3 / J14 pin 2 -- J14 is MIRROR-wired, see below).
     s.pin_glabel(j_pwr[2], "GND")
     s.pin_glabel(j_psu_in[3], "GND")
-    s.pin_glabel(j_psu_out[3], "GND")
+    s.pin_glabel(j_psu_out[2], "GND")
     # GND sinks: ESP32 GND; BOB GND is at socket pin 3 on both sides.
     # (Common ground between LV and HV is essential for the BSS138 to
     # work -- all grounds tie to the same net.)
@@ -566,13 +632,22 @@ def build_schematic():
     for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
         s.pin_glabel(hv[3], "GND", mirror=True)
 
-    # TI PSU pass-through nets for -5V and +12V (not used by this board,
-    # but routed straight from J13 to J14 so the TI mainboard still gets
-    # all four rails when the adapter sits inline between PSU and MB).
+    # TI PSU pass-through nets for -5V and +12V (12V feeds the buck; -5V
+    # is not used by this board but passes through to the TI mainboard).
+    #
+    # J14 is MIRROR-wired relative to J13 (pin 1<->4, 2<->3). Passthrough
+    # geometry: in the original PSU<->MB joint the two connector halves
+    # FACE each other; a passthrough board mounts both of its interfaces
+    # facing the SAME direction, so exactly one must be mirror-wired to
+    # compensate. J13 is hand-soldered (self-correcting); J14 mates the
+    # keyed MB plug, so J14 carries the mirror:
+    #   J14: 1=+5V, 2=GND, 3=+12V, 4=-5V   (J13: 1=-5V, 2=+12V, 3=GND, 4=+5V)
+    # Earlier revs wired J14 straight -- the MB plug only worked flipped
+    # 180 (discovered on rev 3). Fix lands at the V5 spin.
     s.pin_label(j_psu_in[1],  "PSU_-5V")
-    s.pin_label(j_psu_out[1], "PSU_-5V")
+    s.pin_label(j_psu_out[4], "PSU_-5V")
     s.pin_label(j_psu_in[2],  "PSU_+12V")
-    s.pin_label(j_psu_out[2], "PSU_+12V")
+    s.pin_label(j_psu_out[3], "PSU_+12V")
 
     # ==================================================================
     # CHANNEL CONNECTIONS
