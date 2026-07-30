@@ -70,7 +70,7 @@ drives **six column lines** low one at a time (via a 74LS156, pulled up with 1k�
 and reads **eight row lines** back (into the TMS9901, pulled up with 10kΩ). The
 adapter reads the columns (inputs) and drives the rows (open-drain outputs).
 
-GPIOs below are the **v4 (straight-ribbon) mapping**: the flat ribbon lands
+GPIOs below are the **v5 (straight-ribbon) mapping**: the flat ribbon lands
 adapter connector (J10) pin *p* on TI pin 16−*p*, and the firmware pin map
 mirrors to match. (Rev-3 boards used a 180°-twisted ribbon and a different
 GPIO map — see the `v3` git tag.)

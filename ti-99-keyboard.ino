@@ -195,24 +195,24 @@ void updateLed()
 //                      B4=pin14, B3=pin15
 
 // ---------------------------------------------------------------------------
-// v4 straight-cable GPIO remap  (rev-3 twisted-ribbon baseline is tagged v3)
+// v5 straight-cable GPIO remap  (rev-3 twisted-ribbon baseline is tagged v3)
 // ---------------------------------------------------------------------------
 // The 1x15 keyboard ribbon reverses pin order end-to-end because of the
 // connector orientation (J10 pin p <-> TI-motherboard pin 16-p), so rev 1-3
-// only worked with the ribbon TWISTED 180 degrees. v4 targets a plain
+// only worked with the ribbon TWISTED 180 degrees. v5 targets a plain
 // STRAIGHT (untwisted) ribbon.
 //
 // The 14 driven/read matrix lines are remapped here in firmware: each signal
 // now uses the GPIO whose J10 pin mirrors (16-p) to the correct TI pin. It's
 // a pure relabel -- the matrix tables further down are unchanged.
 //
-// Alpha-lock (TI pin 6, J10 pin 10) is no longer a bare pass-through: the v4
+// Alpha-lock (TI pin 6, J10 pin 10) is no longer a bare pass-through: the v5
 // board gives it a level-shifter channel and GPIO9, so EVERY TI line is now
 // reachable from firmware -- future re-pinning never needs a new layout. The
 // firmware still never drives it (software alpha lock; driving the line
 // breaks joystick UP), but the copper is there.
 //
-// v4 board channel fabric (GPIO -> BOB channel -> J10 pin), per Jon's map:
+// v5 board channel fabric (GPIO -> BOB channel -> J10 pin), per Jon's map:
 //   BOB1: GPIO4-7      -> CH4..CH1 -> J10 1-4
 //   BOB2: GPIO15-18    -> CH4..CH1 -> J10 5-8
 //   BOB3: GPIO8,3,9,10 -> CH4..CH1 -> J10 9-12  (GPIO3 = alpha, J10 10)
@@ -240,7 +240,7 @@ void updateLed()
 #define PIN_COL_2Y2    5   // GPIO5  -> J10 p2  -> TI pin 14 (col 2)
 #define PIN_COL_2Y3    4   // GPIO4  -> J10 p1  -> TI pin 15 (col 3)
 
-// Alpha Lock — wired in v4 (GPIO3 -> J10 p10 -> TI pin 6 / P5) but NEVER
+// Alpha Lock — wired in v5 (GPIO3 -> J10 p10 -> TI pin 6 / P5) but NEVER
 // driven: kept INPUT for the life of the sketch. Software alpha lock injects
 // SHIFT instead; driving this line breaks joystick UP on unmodified consoles.
 // GPIO3 is an S3 strapping pin (JTAG select) -- harmless here precisely
@@ -1196,7 +1196,7 @@ static inline void updateRowOutputs()
     }
   }
 
-  // PIN_ALPHA_LOCK is wired (v4: GPIO9 -> J10 p10 -> TI pin 6) but
+  // PIN_ALPHA_LOCK is wired (v5: GPIO3 -> J10 p10 -> TI pin 6) but
   // intentionally never driven -- parked as INPUT for the life of the
   // sketch. See processHidReport for the software Alpha Lock
   // implementation. Driving the original Alpha Lock line breaks
@@ -1611,7 +1611,7 @@ static void strobeObserveDrain()
 // the TI keyboard connector pin numbering:
 //
 // NOTE: "TI pin n" here is the TI MOTHERBOARD pin the signal reaches through
-// the v4 straight ribbon (J10 pin 16-n), not the J10 connector position.
+// the v5 straight ribbon (J10 pin 16-n), not the J10 connector position.
 //
 //   Bit 1  (leftmost)  = TI pin 1  (INT5,  row, GPIO 13)
 //   Bit 2              = TI pin 2  (INT6,  row, GPIO 12)
@@ -1639,7 +1639,7 @@ static const int debugPinMap[15] =
   PIN_ROW_INT8,   // TI pin 3
   PIN_ROW_INT4,   // TI pin 4
   PIN_ROW_INT3,   // TI pin 5
-  PIN_ALPHA_LOCK, // TI pin 6  (P5 / alpha lock -- wired in v4, bench use only)
+  PIN_ALPHA_LOCK, // TI pin 6  (P5 / alpha lock -- wired in v5, bench use only)
   PIN_ROW_INT7,   // TI pin 7
   PIN_COL_1Y1,    // TI pin 8
   PIN_COL_1Y0,    // TI pin 9
@@ -1690,7 +1690,7 @@ void processCycleMode()
     prevIndex = (prevIndex == 0) ? 14 : prevIndex - 1;
   }
 
-  // Skip any unmapped entry (none in v4 -- alpha lock is wired; kept as a
+  // Skip any unmapped entry (none in v5 -- alpha lock is wired; kept as a
   // guard in case a pin is ever unmapped again)
   if (debugPinMap[cyclePinIndex] < 0)
   {

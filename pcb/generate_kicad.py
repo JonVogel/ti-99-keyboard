@@ -504,8 +504,8 @@ def build_schematic():
              (40.64, 142.24), (50.80, 142.24)], start=1):
         s.add_mounting_hole(f"H{i}", hx, hy)
 
-    # v4 straight-cable fix: the flat ribbon lands J10 pin p on TI-motherboard
-    # pin 16-p, so rev 1-3 needed the ribbon twisted 180 degrees. In v4 the
+    # v5 straight-cable fix: the flat ribbon lands J10 pin p on TI-motherboard
+    # pin 16-p, so rev 1-3 needed the ribbon twisted 180 degrees. In v5 the
     # firmware compensates for the mirror on every line (see the GPIO remap in
     # ti-99-keyboard.ino), and every J10 pin -- including alpha lock -- gets a
     # level-shifter channel and GPIO, so future re-pinning is firmware-only.
@@ -671,7 +671,7 @@ def build_schematic():
     #
     # Format: (esp_pin, socket_pin, j10_pin, signal)
 
-    # v4 channel allocation (straight-through ribbon rework):
+    # v5 channel allocation (straight-through ribbon rework):
     # ALL 15 J10 pins now get a level-shifter channel and a GPIO --
     # including alpha lock (J10 pin 10), which rev 1-3 left as a bare
     # J10<->J20 pass-through. GPIO8 and GPIO3 (header pins 12/13) enter
@@ -691,7 +691,7 @@ def build_schematic():
     # Net names are J10-local (the signal name at that J10 position).
     # The straight ribbon lands J10 pin p on TI-motherboard pin 16-p;
     # firmware compensates by driving each TI function on the GPIO of
-    # the mirrored J10 pin (see the v4 remap in ti-99-keyboard.ino).
+    # the mirrored J10 pin (see the v5 remap in ti-99-keyboard.ino).
     # J10 pins 6 (INT9) and 10 (ALPHA_LOCK) hold TI pin 10's and TI
     # pin 6's signals so the passive alpha-lock line lands correctly.
     #

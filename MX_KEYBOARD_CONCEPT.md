@@ -1,6 +1,10 @@
-# Future project: MX mechanical keyboard with built-in BLE/USB adapter
+# Future project: "B-P board" — MX mechanical keyboard with built-in BLE/USB adapter
 
+Working name: **B-P** (BLE + Physical).
 Status: **concept — parked until V5 is bench-validated.** Captured 2026-07-22.
+Reference hardware: an **838-MX99 is on order** (~$30 base pre-order) to serve
+as the mechanical reference — switch layout in the TI opening, bracket design,
+ALPS keycap adapters — and to bench-validate J20 coexistence with the adapter.
 
 ## The idea
 

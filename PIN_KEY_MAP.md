@@ -1,6 +1,6 @@
-# TI-99/4A Adapter — Pin ↔ Key Debug Map (v4 / straight ribbon)
+# TI-99/4A Adapter — Pin ↔ Key Debug Map (v5 / straight ribbon)
 
-> **v4 GPIO map** (straight-through ribbon; J10 pin *p* → TI pin 16−*p*).
+> **v5 GPIO map** (straight-through ribbon; J10 pin *p* → TI pin 16−*p*).
 > For rev-3 boards (180°-twisted ribbon) see this file at the `v3` git tag.
 
 Every key sits at one **column** (read line) and one **row** (drive line), and
@@ -35,7 +35,7 @@ the line they share:
 | 16 | 10 | 6  | row6 | `Q  W  E  R  T  CTRL` |
 | 8  | 7  | 9  | row7 | `1  2  3  4  5  FCTN` |
 
-**GPIO3** = Alpha Lock (TI pin 6, J10 pin 10) — wired in v4 but never driven
+**GPIO3** = Alpha Lock (TI pin 6, J10 pin 10) — wired in v5 but never driven
 (software alpha lock); no keys map to it.
 **GPIO14** = SPARE repair channel (BOB#4-CH1 → J15 solder pad) — jumper J15 to
 any dead line's pad and remap that line's `#define` to 14.

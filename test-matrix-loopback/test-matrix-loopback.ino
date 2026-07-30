@@ -5,9 +5,9 @@
  * ESP32-S3 module (Hosyond N16R8). Incoming-inspection / post-solder go/no-go
  * for a bare module.
  *
- * v4 pin set: all 16 adapter GPIOs are in service on the v4 board -- 15
+ * v5 pin set: all 16 adapter GPIOs are in service on the v5 board -- 15
  * keyboard lines (including GPIO3 = alpha lock) plus GPIO14 = the SPARE
- * repair channel -- tested as 8 loopback pairs. Labels are v4 roles; for
+ * repair channel -- tested as 8 loopback pairs. Labels are v5 roles; for
  * the rev-3 pin set see the `v3` git tag.
  *
  * WHY THIS EXISTS: an ESD-damaged pin often loses only its INPUT stage while
@@ -20,7 +20,7 @@
  * centre channel) and jumper the 16 GPIOs into the 8 pairs below -- one
  * wire per pair.
  *
- * FIXTURE, assembled v4 board (tests the ENTIRE path -- solder joints,
+ * FIXTURE, assembled v5 board (tests the ENTIRE path -- solder joints,
  * sockets, carrier traces, and both BSS138 FETs of every BOB channel):
  * the pairs land on ADJACENT J10 pins, so the whole fixture is seven
  * 2.54mm shunt jumpers pushed onto J10 pins 1-14 plus ONE wire from
@@ -54,7 +54,7 @@
 
 struct Pair { int a; int b; };
 
-// All 16 v4 fabric GPIOs in 8 loopback pairs (each pin once). Pair order
+// All 16 v5 fabric GPIOs in 8 loopback pairs (each pin once). Pair order
 // follows J10 pin order so an assembled board is jumpered with shunts
 // straight down the J10 header (see FIXTURE above).
 static const Pair PAIRS[] = {
