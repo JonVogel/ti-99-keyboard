@@ -30,7 +30,7 @@ the original keyboard. The original keyboard can optionally run in parallel.
 |------|---------|
 | Hosyond ESP32-S3 N16R8 dev board (USB-C, WROOM-1, 16MB flash, 8MB PSRAM) | MCU with USB host and BLE |
 | BSS138 discrete level shifters, BOB-12009 topology (14 channels, 10kΩ pull-ups to 3V3/5V) | 3.3V ↔ 5V bidirectional, open-drain-friendly |
-| Buck converter (12V→5V) | Power from the TI's 12V rail |
+| — (no regulator needed) | Powered by regulated +5V straight from the TI PSU via the power daisy-chain |
 | TI PSU daisy-chain header — Molex KK-396 4-pin, `09-65-2048` (DigiKey **WM18825-ND**; alt `26-60-4040` / **WM4622-ND**) | Passes the TI's power through the board; the TI mainboard's existing female plug mates here |
 | PSU-side mating plug — Molex `09-50-3041` housing (DigiKey **WM2102-ND**) + 4× `08-50-0106` crimp terminals (DigiKey **WM2300-ND**) | Female plug on the board's power cable that connects to the TI power supply |
 | 15-pin female-to-female keyboard ribbon (DIY from bulk Dupont parts, ~$1.5–3.5/cable, no crimping — see note below; or ready-made aftermarket TI ribbon, ~$8) | Connects the adapter's male header to the TI's male keyboard header |

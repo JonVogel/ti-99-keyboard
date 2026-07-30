@@ -1,6 +1,6 @@
 # TI-99/4A Keyboard Adapter
 
-USB/BLE keyboard adapter for the TI-99/4A. ESP32-S3 module translates modern keyboard HID reports into the TI's 6x8 keyboard matrix via discrete BSS138 level shifters. Installed inside the TI with the original keyboard removed; powered from the TI's 12V rail through a buck converter.
+USB/BLE keyboard adapter for the TI-99/4A. ESP32-S3 module translates modern keyboard HID reports into the TI's 6x8 keyboard matrix via discrete BSS138 level shifters. Installed inside the TI with the original keyboard removed; powered by regulated **+5V straight from the TI PSU** via the power daisy-chain (no buck converter — the originally planned 12V→5V buck proved unnecessary).
 
 Sketch: `ti-99-keyboard.ino` (Arduino-ESP32 3.3.7).
 PCB: `pcb/ti99-kb-adapter.kicad_pro` (KiCad 10), regeneratable via `pcb/generate_kicad.py`.
@@ -39,7 +39,7 @@ Serial monitor uses the UART port — USB CDC On Boot is **Disabled** so the USB
 
 - **MCU:** Hosyond ESP32-S3 N16R8 dev board (USB-C, ESP32-S3-WROOM-1, 16MB flash, 8MB PSRAM). Sold as "Hosyond 3Pack ESP32-S3 Development Board N16R8 MCU with Dual-Mode Wi-Fi Bluetooth Type-C, Compatible with Arduino IoT ESP32-S3-WROOM-1". The older mini-USB ESP32-S3-DevKitC-1 boards are **obsoleted for this project** — at least one unit browns out repeatedly during NimBLE init (3V3 LDO can't keep up with the BLE TX inrush). Confirmed working Hosyond unit MAC e0:72:a1:d4:fb:20.
 - **Level shifters:** BSS138 discrete MOSFET shifters, BOB-12009 topology (SparkFun). 14 channels total, 10kΩ pull-ups to 3V3 (LV) and 5V (HV).
-- **Power:** standalone 12V→5V buck converter from TI's 12V rail; PSU daisy-chains via J13 solder pads + J14 Molex KK-396 male header to the MB plug.
+- **Power:** regulated +5V taken directly from the TI PSU via the daisy-chain (no buck converter needed); PSU daisy-chains via J13 solder pads + J14 Molex KK-396 male header to the MB plug (J14 mirror-wired as of V5). The 12V and −5V rails pass through untouched.
 - **Keyboard connector:** uses the **original TI-99/4A keyboard connector geometry** (15-position single-row 2.54mm pitch). The TI motherboard has a 15-pin male header at this connector. The rev 2 adapter board also has a 15-pin male header soldered on. The cable between them is a **15-pin female-to-female ribbon** — both ends female, both boards male, symmetric. Aftermarket TI keyboard ribbons (arcadeshopper.com, AtariAge sources) work for that link. Orientation gotcha: OEM ribbons mark **pin 15** with the red stripe, not pin 1 — verify against the silkscreen before plugging in.
 
 ### Why BSS138 and not TXS0108E
