@@ -35,8 +35,10 @@
  *   GPIO11 (row5/INT8)  <->  GPIO12 (row3/INT6)   = J10 13-14 (shunt)
  *   GPIO13 (row2/INT5)  <->  GPIO14 (SPARE)       = J10 15 <-> J15 (wire)
  *
- * USE: flash, open serial @115200. It prints a PASS/FAIL table. Socket the
- * next module and press BOOT (or send any serial char) to re-run.
+ * USE: flash, open serial @115200. It prints a PASS/FAIL table, and the
+ * onboard RGB LED gives the verdict without a monitor: GREEN = all pins
+ * pass, RED = any failure (dim blue while running). Socket the next
+ * module and press BOOT (or send any serial char) to re-run.
  *
  * BUILD: arduino-cli compile --fqbn esp32:esp32:esp32s3 test-matrix-loopback
  *        (default S3 options are fine -- no PSRAM/partition settings needed)
@@ -51,6 +53,11 @@
 #include <Arduino.h>
 
 #define BOOT_BUTTON 0   // not a matrix pin; used to re-trigger the test
+
+// Onboard WS2812 RGB LED: at-a-glance verdict without a serial monitor.
+// GREEN = all pins pass, RED = any failure, dim BLUE = test running.
+#define PIN_LED        48
+#define LED_BRIGHTNESS 25
 
 struct Pair { int a; int b; };
 
@@ -122,6 +129,8 @@ static bool testDirection(int driver, int reader)
 
 static void runTest()
 {
+  rgbLedWrite(PIN_LED, 0, 0, LED_BRIGHTNESS);   // blue = running
+
   Serial.println();
   Serial.println("=== TI-99 adapter: matrix-pin loopback self-test ===");
   Serial.println("Jumper these pairs (one wire each):");
@@ -156,10 +165,12 @@ static void runTest()
   Serial.println("----------------------------------------------------------");
   if (allPass)
   {
+    rgbLedWrite(PIN_LED, 0, LED_BRIGHTNESS, 0);   // green = board good
     Serial.println(">>> MODULE PASS -- all 16 pins drive AND read.");
   }
   else
   {
+    rgbLedWrite(PIN_LED, LED_BRIGHTNESS, 0, 0);   // red = something failed
     Serial.println(">>> MODULE FAIL -- see FAIL above.");
     Serial.println("    'GPIO_X -> GPIO_Y FAIL' = X output bad OR Y input bad.");
     Serial.println("    (A dead input reads its own idle level, so the pin");
