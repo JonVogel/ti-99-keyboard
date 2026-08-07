@@ -136,6 +136,10 @@ Board: 2-layer, all through-hole, no active components. 0.5mm signal traces, 0.7
 
 **V5 is bench-verified on the console** (straight ribbon, daisy-chain power, full matrix) and its branch is merged to `main` — `main` is the living branch now.
 
-Next: order **V6** from JLCPCB (`pcb/gerbers/ti99-kb-adapter_r6.zip` — 2-layer, 1.6mm, HASL; top-edge power connectors). On arrival: loopback-test (shunt fixture down J10 + J15 wire; LED verdict green/red), assemble, verify power routing in the console. Then: 3D-printed enclosure/mount (off-board ribbon path, LED window — see memory notes), a v1.0 release with the merged firmware, and the **B-P board** (`MX_KEYBOARD_CONCEPT.md`) once the 838-MX99 reference arrives.
+**V6 ordered from JLCPCB 2026-08-07** (`ti99-kb-adapter_r6.zip` — top-edge power connectors). On arrival: loopback-test (shunt fixture down J10 + J15 wire; LED verdict green/red), assemble, verify power routing in the console.
+
+**V7 (planned): discretize the level shifters + JLC assembly.** Replace the 4 BOB-12009 modules + sockets with 16 on-board channel cells (BSS138 SOT-23 + 2× 10k 0805 each — same proven topology, zero firmware change, ~$15/board cheaper) and have **JLCPCB populate the SMT parts** (kills the hand-soldered-BOB-joint failure mode; connectors remain hand-soldered). Requires: generator emits the channel cells with LCSC part-number fields, plus BOM + CPL exports (`kicad-cli pcb export pos`). Start after V6 verifies. V7's shifter section then carries directly into the **B-P board** (`MX_KEYBOARD_CONCEPT.md`).
+
+Also queued: 3D-printed enclosure/mount (off-board ribbon path, LED window), and a v1.0 release with the merged firmware.
 
 When regenerating the schematic from `generate_kicad.py`, note that KiCad's schematic Y increases downward — pin 1 is at the smallest y. Pin formula: `py = y - fy + (k-1) * 2.54`.
