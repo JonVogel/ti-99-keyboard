@@ -117,7 +117,7 @@ After a clean Arduino compile, upload automatically — don't ask first.
 - **Rev 2 (BSS138 — superseded):** 5 boards from JLCPCB, $7.69, ordered 2026-04-25. Replaced TXS0108E with BOB-12009 daughterboards, added TI PSU daisy-chain (J13/J14) and 4 mounting holes. **Fab bug: the level-shifter power and GND pins were swapped** — didn't work; fixed in rev 3.
 - **Rev 3 (BSS138 — current, in hand):** corrects the rev-2 power/GND swap and carries the **second parallel 15-pin keyboard connector (J20)**, so an original TI keyboard can run alongside the modern USB/BLE keyboard (shared matrix, either can drive a press). Matrix, typing, and SHIFT/CTRL/FCTN modifiers all work. **Known issue:** the keyboard ribbon must be **twisted 180° (a pin reversal)** to work — see below. Gerbers committed to repo.
 
-Board: 2-layer, all through-hole, no active components. 0.5mm signal and power traces, GND pour on F.Cu and B.Cu, ~65×65mm.
+Board: 2-layer, all through-hole, no active components. 0.5mm signal traces, 0.75–1.0mm power runs, GND pour on F.Cu and B.Cu, ~65×65mm. Power connectors (J9/J13/J14) moved to the **top edge** for better console power routing, with the power runs upsized to 0.75–1.0mm (layout change post-V5, lands at the next fab).
 
 ### Rev 3 known issues (fixed in the V5 spin)
 
