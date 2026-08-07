@@ -1,0 +1,23 @@
+v4 connection map (straight ribbon; "TI-n" = J10 connector pin n)
+
+IO4     BOB1-LV4    BOB1-HV4    TI-1  (INT5)
+IO5     BOB1-LV3    BOB1-HV3    TI-2  (INT6)
+IO6     BOB1-LV2    BOB1-HV2    TI-3  (INT8)
+IO7     BOB1-LV1    BOB1-HV1    TI-4  (INT4)
+IO15    BOB2-LV4    BOB2-HV4    TI-5  (INT3)
+IO16    BOB2-LV3    BOB2-HV3    TI-6  (INT9)
+IO17    BOB2-LV2    BOB2-HV2    TI-7  (INT7)
+IO18    BOB2-LV1    BOB2-HV1    TI-8  (1Y1)
+IO8     BOB3-LV4    BOB3-HV4    TI-9  (1Y0)
+IO3     BOB3-LV3    BOB3-HV3    TI-10 (Alpha Lock)
+IO9     BOB3-LV2    BOB3-HV2    TI-11 (INT10)
+IO10    BOB3-LV1    BOB3-HV1    TI-12 (2Y0)
+IO11    BOB4-LV4    BOB4-HV4    TI-13 (2Y1)
+IO12    BOB4-LV3    BOB4-HV3    TI-14 (2Y2)
+IO13    BOB4-LV2    BOB4-HV2    TI-15 (2Y3)
+IO14    BOB4-LV1    BOB4-HV1    SPARE pad (J15)
+
+Notes:
+- IO3 (strapping pin) sits on alpha lock, which is never driven -- benign.
+- SPARE (IO14 -> J15 pad): jumper to any dead line's pad + remap firmware.
+- Through the flat ribbon, J10 pin p lands on TI motherboard pin 16-p.
