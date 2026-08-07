@@ -129,6 +129,75 @@ def mounting_hole_sym_def():
 
 
 # ---------------------------------------------------------------------------
+# Discrete level-shifter parts (V7): BSS138 SOT-23 + 10k 0805
+# ---------------------------------------------------------------------------
+def bss138_sym_def():
+    """N-MOSFET, SOT-23. Pins: 3=D (left upper), 1=G (left lower),
+    2=S (right). Drawn as a simple box like the rest of the generated
+    parts; D/G on the left (HV/J10 side), S on the right (LV/ESP side)."""
+    pins = [
+        ("3", "D", -5.08, -2.54, 0),
+        ("1", "G", -5.08, 2.54, 0),
+        ("2", "S", 5.08, 0.00, 180),
+    ]
+    pin_txt = "\n".join(
+        f"        (pin passive line (at {px:.2f} {py:.2f} {ang}) (length 2.54)\n"
+        f'          (name "{nm}" (effects (font (size 1.27 1.27))))\n'
+        f'          (number "{num}" (effects (font (size 1.27 1.27)))))'
+        for num, nm, px, py, ang in pins)
+    return (
+        '    (symbol "ti99-parts:BSS138"\n'
+        "      (pin_names (offset 0.508))\n"
+        "      (exclude_from_sim no) (in_bom yes) (on_board yes)\n"
+        '      (property "Reference" "Q" (at 0 -5.08 0)\n'
+        "        (effects (font (size 1.27 1.27))))\n"
+        '      (property "Value" "BSS138" (at 0 5.08 0)\n'
+        "        (effects (font (size 1.27 1.27))))\n"
+        '      (property "Footprint" "" (at 0 0 0)\n'
+        "        (effects (font (size 1.27 1.27)) (hide yes)))\n"
+        '      (property "Datasheet" "~" (at 0 0 0)\n'
+        "        (effects (font (size 1.27 1.27)) (hide yes)))\n"
+        '      (symbol "BSS138_1_1"\n'
+        "        (rectangle (start -2.54 -3.81) (end 2.54 3.81)\n"
+        "          (stroke (width 0.254) (type default))\n"
+        "          (fill (type background)))\n"
+        + pin_txt + "\n"
+        "      )\n"
+        "    )"
+    )
+
+
+def r10k_sym_def():
+    """10k pull-up, 0805, horizontal box. Pins: 1=left, 2=right."""
+    pin_txt = "\n".join(
+        f"        (pin passive line (at {px:.2f} 0.00 {ang}) (length 2.54)\n"
+        f'          (name "{nm}" (effects (font (size 1.27 1.27))))\n'
+        f'          (number "{num}" (effects (font (size 1.27 1.27)))))'
+        for num, nm, px, ang in
+        [("1", "1", -5.08, 0), ("2", "2", 5.08, 180)])
+    return (
+        '    (symbol "ti99-parts:R10k"\n'
+        "      (pin_names (offset 0.508) hide)\n"
+        "      (exclude_from_sim no) (in_bom yes) (on_board yes)\n"
+        '      (property "Reference" "R" (at 0 -3.81 0)\n'
+        "        (effects (font (size 1.27 1.27))))\n"
+        '      (property "Value" "10k" (at 0 3.81 0)\n'
+        "        (effects (font (size 1.27 1.27))))\n"
+        '      (property "Footprint" "" (at 0 0 0)\n'
+        "        (effects (font (size 1.27 1.27)) (hide yes)))\n"
+        '      (property "Datasheet" "~" (at 0 0 0)\n'
+        "        (effects (font (size 1.27 1.27)) (hide yes)))\n"
+        '      (symbol "R10k_1_1"\n'
+        "        (rectangle (start -2.54 -1.27) (end 2.54 1.27)\n"
+        "          (stroke (width 0.254) (type default))\n"
+        "          (fill (type background)))\n"
+        + pin_txt + "\n"
+        "      )\n"
+        "    )"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Schematic builder
 # ---------------------------------------------------------------------------
 class Schematic:
@@ -222,6 +291,47 @@ class Schematic:
             f"    )\n"
             f"  )"
         )
+
+    # -- Add a simple single-unit part (FET, resistor). Returns pin coords --
+    def add_simple(self, ref, lib_id, value, fp, x, y, pin_offsets,
+                   lcsc=None):
+        """Place a single-unit symbol. pin_offsets: {num: (dx, dy)} are the
+        pin CONNECTION points relative to (x, y). Returns {num: (ax, ay)}.
+        lcsc: optional LCSC part number, stored as a hidden "LCSC" property
+        for the JLCPCB assembly BOM export."""
+        self.needed_parts.add(lib_id)
+        pin_lines = "\n".join(
+            f'    (pin "{k}" (uuid "{uid()}"))' for k in pin_offsets)
+        lcsc_prop = ""
+        if lcsc:
+            lcsc_prop = (
+                f'    (property "LCSC" "{lcsc}" (at 0 0 0)\n'
+                f"      (effects (font (size 1.27 1.27)) (hide yes)))\n")
+        self.components.append(
+            f"  (symbol\n"
+            f'    (lib_id "{lib_id}")\n'
+            f"    (at {x:.2f} {y:.2f} 0)\n"
+            f"    (unit 1)\n"
+            f"    (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)\n"
+            f'    (uuid "{uid()}")\n'
+            f'    (property "Reference" "{ref}" (at {x:.2f} {y - 5.08:.2f} 0)\n'
+            f"      (effects (font (size 1.27 1.27))))\n"
+            f'    (property "Value" "{value}" (at {x:.2f} {y + 5.08:.2f} 0)\n'
+            f"      (effects (font (size 1.27 1.27))))\n"
+            f'    (property "Footprint" "{fp}" (at 0 0 0)\n'
+            f"      (effects (font (size 1.27 1.27)) (hide yes)))\n"
+            f'    (property "Datasheet" "~" (at 0 0 0)\n'
+            f"      (effects (font (size 1.27 1.27)) (hide yes)))\n"
+            + lcsc_prop
+            + pin_lines + "\n"
+            f"    (instances\n"
+            f'      (project "{PROJECT}"\n'
+            f'        (path "/{self.sheet_uuid}" (reference "{ref}") (unit 1))\n'
+            f"      )\n"
+            f"    )\n"
+            f"  )"
+        )
+        return {k: (x + dx, y + dy) for k, (dx, dy) in pin_offsets.items()}
 
     # -- Add a 2-unit multi-part symbol (e.g. BOB-12009, ESP32-S3-N16R8) --
     def add_part2(self, ref, lib_id, value, n_per_unit, fp,
@@ -371,6 +481,10 @@ class Schematic:
             defs_list.append(esp32_symbol(lib_prefix="ti99-parts:"))
         if "Mechanical:MountingHole" in self.needed_parts:
             defs_list.append(mounting_hole_sym_def())
+        if "ti99-parts:BSS138" in self.needed_parts:
+            defs_list.append(bss138_sym_def())
+        if "ti99-parts:R10k" in self.needed_parts:
+            defs_list.append(r10k_sym_def())
         defs = "\n".join(defs_list)
         return (
             f"(kicad_sch\n"
@@ -449,9 +563,10 @@ def build_schematic():
     FP_M04 = ("Connector_Molex:Molex_KK-396_5273-04A_"
              "1x04_P3.96mm_Vertical")
     # Project-specific footprints (see pcb/lib/ti99-parts.pretty/, generated
-    # by generate_parts.py). The BOB and ESP32 footprints have proper row
-    # spacing baked in; J13 has 1.1mm drill for 18-22 AWG hookup wire.
-    FP_BOB = "ti99-parts:BOB-12009"
+    # by generate_parts.py). The ESP32 footprint has proper row spacing
+    # baked in; J13 has 1.1mm drill for 18-22 AWG hookup wire. (The BOB
+    # footprint remains in the library for rev-3/5/6 boards but is no
+    # longer used -- V7 uses discrete channel cells.)
     FP_ESP = "ti99-parts:ESP32-S3-N16R8"
     FP_J13 = "ti99-parts:J13-CableHeader-1x04"
 
@@ -535,37 +650,9 @@ def build_schematic():
         _, py = j_ti[pin]
         s.text(sig, 24.0, py, 1.27)
 
-    # Four BOB-12009 modules, stacked vertically between TI (left) and
-    # ESP32 (right). Each BOB is a single multi-unit component:
-    #   unit 1 = LV row (pads  1- 6), placed on the right facing ESP32
-    #   unit 2 = HV row (pads  7-12), placed on the left  facing TI
-    # Both units share one Reference (J1..J4) and one footprint with
-    # 10mm row spacing baked in -- "Update PCB from Schematic" gives one
-    # footprint per BOB at the correct spacing, no manual realignment.
-    BOB_X_HV = 87.63
-    BOB_X_LV = BOB_X_HV + 10.00
-    BOB_Y_START = 40.64
-    BOB_Y_STEP = 20.32
-
-    def place_bob(idx, ref):
-        y = BOB_Y_START + idx * BOB_Y_STEP
-        lv, hv = s.add_part2(
-            ref=ref,
-            lib_id="ti99-parts:BOB-12009",
-            value="BOB-12009",
-            n_per_unit=6,
-            fp=FP_BOB,
-            x1=BOB_X_LV, y1=y, mirror1=False,           # LV unit on right
-            val_pos1=(BOB_X_LV - 3.302, y, 90),
-            x2=BOB_X_HV, y2=y, mirror2=True,            # HV unit on left
-            val_pos2=(BOB_X_HV + 3.556, y, 90),
-        )
-        return hv, lv
-
-    j1_hv, j1_lv = place_bob(0, "J1")
-    j2_hv, j2_lv = place_bob(1, "J2")
-    j3_hv, j3_lv = place_bob(2, "J3")
-    j4_hv, j4_lv = place_bob(3, "J4")
+    # V7: the four BOB-12009 daughterboards are replaced by 16 discrete
+    # on-board channel cells (BSS138 + 2x 10k each), generated below in
+    # the CHANNEL CELLS section after the ESP32 is placed.
 
     # ESP32-S3-N16R8 dev board as a single multi-unit component.
     # unit 1 = left header (pads  1-22), placed mirrored facing BOBs
@@ -587,10 +674,8 @@ def build_schematic():
     s.text("POWER", 43.688, 27.178, 2.0)
     s.text("TI PSU DAISY-CHAIN  (J13 = cable to PSU,  "
            "J14 = MB plug)", 50.80, 122.0, 1.5)
-    s.text("BOB #1 (TI 1-4)",  93.0, 32.0, 1.3)
-    s.text("BOB #2 (TI 5-9)",  93.0, 52.3, 1.3)
-    s.text("BOB #3 (TI 10-13)", 93.0, 72.6, 1.3)
-    s.text("BOB #4 (TI 14-15)", 93.0, 92.9, 1.3)
+    s.text("LEVEL SHIFTERS - 16x BSS138 + 10k pull-up pairs "
+           "(Q1-Q16 / R1-R32, JLC-assembled SMT)", 93.0, 24.5, 1.3)
     s.text("ESP32-S3 DevKitC-1 (Left Header)", 155.448, 87.376, 1.5,
            angle=90)
     s.text("TI-99/4A Keyboard", 31.24, 88.316, 1.5, angle=90)
@@ -601,36 +686,28 @@ def build_schematic():
     # POWER NETS
     # ==================================================================
 
-    # +3V3 sources: ESP32 pins 1, 2
+    # +3V3 sources: ESP32 pins 1, 2. Sinks: the 16 channel cells' gates
+    # and LV pull-ups (labeled in the CHANNEL CELLS section).
     s.pin_glabel(j_esp_l[1], "+3V3", mirror=True)
     s.pin_glabel(j_esp_l[2], "+3V3", mirror=True)
-    # +3V3 sinks: LV rail (socket pin 4) on each BOB LV side
-    for lv in (j1_lv, j2_lv, j3_lv, j4_lv):
-        s.pin_glabel(lv[4], "+3V3")
 
     # +5V sources: bench-test 2-pin header (J9) AND TI PSU daisy-chain
     # (J13 pin 4 / J14 pin 1 -- J14 is MIRROR-wired, see below).
     s.pin_glabel(j_pwr[1], "+5V")
     s.pin_glabel(j_psu_in[4], "+5V")
     s.pin_glabel(j_psu_out[1], "+5V")
-    # +5V sinks: ESP32 5V0 (pin 21), HV rail (socket pin 4) on each BOB HV side
+    # +5V sinks: ESP32 5V0 (pin 21) and the cells' HV pull-ups.
     s.pin_glabel(j_esp_l[21], "+5V", mirror=True)
-    for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
-        s.pin_glabel(hv[4], "+5V", mirror=True)
 
     # GND sources: bench-test 2-pin header (J9) AND TI PSU daisy-chain
     # (J13 pin 3 / J14 pin 2 -- J14 is MIRROR-wired, see below).
     s.pin_glabel(j_pwr[2], "GND")
     s.pin_glabel(j_psu_in[3], "GND")
     s.pin_glabel(j_psu_out[2], "GND")
-    # GND sinks: ESP32 GND; BOB GND is at socket pin 3 on both sides.
-    # (Common ground between LV and HV is essential for the BSS138 to
-    # work -- all grounds tie to the same net.)
+    # GND sinks: ESP32 GND. (The discrete cells have no GND pin -- the
+    # common LV/HV ground the BSS138 topology needs is the board's
+    # shared GND plane, unchanged.)
     s.pin_glabel(j_esp_l[22], "GND", mirror=True)
-    for lv in (j1_lv, j2_lv, j3_lv, j4_lv):
-        s.pin_glabel(lv[3], "GND")
-    for hv in (j1_hv, j2_hv, j3_hv, j4_hv):
-        s.pin_glabel(hv[3], "GND", mirror=True)
 
     # TI PSU pass-through nets for -5V and +12V (12V feeds the buck; -5V
     # is not used by this board but passes through to the TI mainboard).
@@ -650,102 +727,104 @@ def build_schematic():
     s.pin_label(j_psu_out[3], "PSU_+12V")
 
     # ==================================================================
-    # CHANNEL CONNECTIONS
+    # CHANNEL CELLS (V7: discrete level shifters)
     # ==================================================================
-    # Each channel runs: ESP32 GPIO -> BOB LV pin -> [BSS138 MOSFET] ->
-    # BOB HV pin -> TI keyboard pin.
+    # Each channel: ESP32 GPIO -> Q source (LV) -> [BSS138] -> Q drain
+    # (HV) -> TI keyboard pin, with the gate on +3V3 and a 10k pull-up
+    # on each side (LV->3V3, HV->5V). Same topology as the BOB-12009
+    # modules they replace; JLCPCB assembles all 48 SMT parts.
+    #
+    # Refs: channel n = Q{n}, R{2n-1} (LV pull-up), R{2n} (HV pull-up).
+    # LCSC parts: Q = C78284 (JSCJ BSS138 SOT-23), R = C17414
+    # (UNI-ROYAL 10k 0805 1%, JLC Basic part).
     #
     # IMPORTANT: LV and HV sides are electrically isolated through the
-    # MOSFET, so they MUST have different net names. We use:
-    #   LV-domain net:  "<signal>_LV"  (ESP32 pin  + BOB LV-side pin)
-    #   HV-domain net:  "<signal>"     (BOB HV-side pin + TI pin)
-    #
-    # Channel-to-socket-pin mapping (same on both LV and HV sides):
-    #   CH1=pin 6, CH2=pin 5, CH3=pin 2, CH4=pin 1
+    # MOSFET, so they MUST have different net names:
+    #   LV-domain net:  "<signal>_LV"  (ESP32 pin + Q source + R pull-up)
+    #   HV-domain net:  "<signal>"     (Q drain + R pull-up + TI pin)
     #
     # LBGE ESP32-S3 header pin -> GPIO map (left header):
     #   pin 4=GPIO4, 5=GPIO5, 6=GPIO6, 7=GPIO7,
     #   pin 8=GPIO15, 9=GPIO16, 10=GPIO17, 11=GPIO18,
-    #   pin 12=GPIO8, pin 15=GPIO9, 16=GPIO10, 17=GPIO11, 18=GPIO12,
-    #   pin 19=GPIO13, 20=GPIO14
+    #   pin 12=GPIO8, pin 13=GPIO3, pin 15=GPIO9, 16=GPIO10, 17=GPIO11,
+    #   18=GPIO12, pin 19=GPIO13, 20=GPIO14
     #
-    # Format: (esp_pin, socket_pin, j10_pin, signal)
+    # v5 channel allocation (unchanged in V7 -- same nets, same GPIOs):
+    # all 15 J10 pins have a channel (alpha lock included, GPIO3 on the
+    # never-driven line where its strapping quirk is benign), plus the
+    # SPARE repair channel (GPIO14 -> Q16 -> J15 solder pad). Net names
+    # are J10-local; the straight ribbon lands J10 pin p on TI-mb pin
+    # 16-p and firmware compensates (see remap in ti-99-keyboard.ino).
+    #
+    # Format: (esp_pin, j10_pin (None = SPARE pad J15), signal)
+    CHANNELS = [
+        (4,  1,  "INT5"),        # GPIO4  -> J10 1
+        (5,  2,  "INT6"),        # GPIO5  -> J10 2
+        (6,  3,  "INT8"),        # GPIO6  -> J10 3
+        (7,  4,  "INT4"),        # GPIO7  -> J10 4
+        (8,  5,  "INT3"),        # GPIO15 -> J10 5
+        (9,  6,  "INT9"),        # GPIO16 -> J10 6
+        (10, 7,  "INT7"),        # GPIO17 -> J10 7
+        (11, 8,  "1Y1"),         # GPIO18 -> J10 8
+        (12, 9,  "1Y0"),         # GPIO8  -> J10 9
+        (13, 10, "ALPHA_LOCK"),  # GPIO3  -> J10 10
+        (15, 11, "INT10"),       # GPIO9  -> J10 11
+        (16, 12, "2Y0"),         # GPIO10 -> J10 12
+        (17, 13, "2Y1"),         # GPIO11 -> J10 13
+        (18, 14, "2Y2"),         # GPIO12 -> J10 14
+        (19, 15, "2Y3"),         # GPIO13 -> J10 15
+        (20, None, "SPARE"),     # GPIO14 -> J15 SPARE pad
+    ]
+    FP_Q = "Package_TO_SOT_SMD:SOT-23"
+    FP_R = "Resistor_SMD:R_0805_2012Metric"
+    Q_PINS = {3: (-5.08, -2.54), 1: (-5.08, 2.54), 2: (5.08, 0.00)}
+    R_PINS = {1: (-5.08, 0.00), 2: (5.08, 0.00)}
 
-    # v5 channel allocation (straight-through ribbon rework):
-    # ALL 15 J10 pins now get a level-shifter channel and a GPIO --
-    # including alpha lock (J10 pin 10), which rev 1-3 left as a bare
-    # J10<->J20 pass-through. GPIO8 and GPIO3 (header pins 12/13) enter
-    # the fabric, and all 16 channels are used: 15 keyboard lines plus
-    # the SPARE repair channel (GPIO14 -> BOB#4-CH1 -> J15 solder pad).
+    # Cell layout: [+5V]-[R_hv]-[Q]-[R_lv]-[+3V3] in a horizontal strip;
+    # the pull-ups connect to the FET by DRAWN WIRES (the pin_label stub
+    # from the Q pin ends exactly on the R pin), so each net carries one
+    # label, not three. Two columns of eight cells.
     #
-    # Each BOB gets a contiguous block of GPIOs AND a contiguous block
-    # of J10 pins, with BOBs ordered top-to-bottom, so every wire runs
-    # straight (no inter-BOB crossings):
-    #
-    #   BOB#1 (top):    GPIO 4-7      (J11 pins 4-7)        <-> J10 1-4
-    #   BOB#2:          GPIO 15-18    (J11 pins 8-11)       <-> J10 5-8
-    #   BOB#3:          GPIO 8,3,9,10 (J11 pins 12,13,15,16)<-> J10 9-12
-    #   BOB#4 (bottom): GPIO 11-13    (J11 pins 17-19)      <-> J10 13-15
-    #                   GPIO 14       (J11 pin 20)          <-> SPARE pad J15
-    #
-    # Net names are J10-local (the signal name at that J10 position).
-    # The straight ribbon lands J10 pin p on TI-motherboard pin 16-p;
-    # firmware compensates by driving each TI function on the GPIO of
-    # the mirrored J10 pin (see the v5 remap in ti-99-keyboard.ino).
-    # J10 pins 6 (INT9) and 10 (ALPHA_LOCK) hold TI pin 10's and TI
-    # pin 6's signals so the passive alpha-lock line lands correctly.
-    #
-    # Channel-to-socket-pin mapping (same on LV and HV sides):
-    #   CH1=pin 6, CH2=pin 5, CH3=pin 2, CH4=pin 1
+    # COLLISION SAFETY: every connector's pins sit on the 2.54mm grid
+    # (or, for the ESP32's 22-pin units, the half-grid) at specific y
+    # values; overlapping collinear wires in KiCad MERGE NETS. Cell rows
+    # use y = 31.75 + n*10.16 (half-grid) with x-extents chosen clear of
+    # every connector stub's x-range, verified by the netlist checker.
+    for n, (esp_pin, j10_pin, sig) in enumerate(CHANNELS, start=1):
+        net_lv = f"{sig}_LV"
+        net_hv = sig
+        # Column 1 is staggered 5.08 down so the two columns never share
+        # a wire row, and sits left of the ESP32 header's stub x-range;
+        # both columns use half-grid rows so they can't share a row with
+        # J9/J10/J20 (grid) or J13/J14 (off-grid) stubs either. The ESP32
+        # pins are ALSO half-grid, so column x-extents must stay clear of
+        # x >= 138.43 -- enforced by the collinear-overlap check.
+        col, row = divmod(n - 1, 8)
+        cx = 76.20 + col * 30.48
+        cy = 31.75 + col * 5.08 + row * 10.16
 
-    # Each J10 pin in a BOB's block wires to the BOB's HV-side pin at
-    # the SAME vertical position, top-to-bottom -- block's top pin ->
-    # HV4 (top of BOB), then HV3, HV2, HV1 (bottom). This avoids
-    # crossing wires in the schematic. Mapping uses socket pins
-    # 1, 2, 5, 6 in that order (= CH4, CH3, CH2, CH1).
-    #
-    # BOB#1: J10 1-4
-    bob1_nets = [
-        (4, 1, 1, "INT5"),   # GPIO4 -> CH4 (HV4) -> J10 1
-        (5, 2, 2, "INT6"),   # GPIO5 -> CH3 (HV3) -> J10 2
-        (6, 5, 3, "INT8"),   # GPIO6 -> CH2 (HV2) -> J10 3
-        (7, 6, 4, "INT4"),   # GPIO7 -> CH1 (HV1) -> J10 4
-    ]
-    # BOB#2: J10 5-8
-    bob2_nets = [
-        (8,  1, 5, "INT3"),  # GPIO15 -> CH4 (HV4) -> J10 5
-        (9,  2, 6, "INT9"),  # GPIO16 -> CH3 (HV3) -> J10 6
-        (10, 5, 7, "INT7"),  # GPIO17 -> CH2 (HV2) -> J10 7
-        (11, 6, 8, "1Y1"),   # GPIO18 -> CH1 (HV1) -> J10 8
-    ]
-    # BOB#3: J10 9-12. Alpha lock rides CH3 from GPIO3 -- the strapping
-    # quirk is harmless there: the line is parked as INPUT, never driven,
-    # and the channel pull-up holding it high at boot is benign.
-    bob3_nets = [
-        (12, 1,  9, "1Y0"),        # GPIO8  -> CH4 (HV4) -> J10 9
-        (13, 2, 10, "ALPHA_LOCK"), # GPIO3  -> CH3 (HV3) -> J10 10
-        (15, 5, 11, "INT10"),      # GPIO9  -> CH2 (HV2) -> J10 11
-        (16, 6, 12, "2Y0"),        # GPIO10 -> CH1 (HV1) -> J10 12
-    ]
-    # BOB#4: J10 13-15 on CH4/CH3/CH2; CH1 = SPARE repair channel (below)
-    bob4_nets = [
-        (17, 1, 13, "2Y1"),   # GPIO11 -> CH4 (HV4) -> J10 13
-        (18, 2, 14, "2Y2"),   # GPIO12 -> CH3 (HV3) -> J10 14
-        (19, 5, 15, "2Y3"),   # GPIO13 -> CH2 (HV2) -> J10 15
-    ]
+        q = s.add_simple(f"Q{n}", "ti99-parts:BSS138", "BSS138", FP_Q,
+                         cx, cy, Q_PINS, lcsc="C78284")
+        # LV pull-up right of Q at the source's y; HV pull-up left of Q
+        # at the drain's y. Pin-to-pin gaps equal the label wire stubs.
+        r_lv = s.add_simple(f"R{2 * n - 1}", "ti99-parts:R10k", "10k",
+                            FP_R, cx + 15.24, cy, R_PINS, lcsc="C17414")
+        r_hv = s.add_simple(f"R{2 * n}", "ti99-parts:R10k", "10k",
+                            FP_R, cx - 15.24, cy - 2.54, R_PINS,
+                            lcsc="C17414")
 
-    for bob_lv, bob_hv, nets in (
-        (j1_lv, j1_hv, bob1_nets),
-        (j2_lv, j2_hv, bob2_nets),
-        (j3_lv, j3_hv, bob3_nets),
-        (j4_lv, j4_hv, bob4_nets),
-    ):
-        for esp_pin, socket_pin, j10_pin, sig in nets:
-            net_lv = f"{sig}_LV"   # ESP32 -> BOB LV (3V3 domain)
-            net_hv = sig           # BOB HV -> TI    (5V domain)
-            s.pin_label(j_esp_l[esp_pin], net_lv, mirror=True)
-            s.pin_label(bob_lv[socket_pin], net_lv)
-            s.pin_label(bob_hv[socket_pin], net_hv, mirror=True)
+        # LV domain: Q source --wire--> R_lv pin 1; one label on the
+        # wire; ESP32 GPIO joins by net name.
+        s.pin_label(q[2], net_lv, wire_ext=5.08, label_offset=2.54)
+        s.pin_label(j_esp_l[esp_pin], net_lv, mirror=True)
+        s.pin_glabel(r_lv[2], "+3V3")
+        s.pin_glabel(q[1], "+3V3", mirror=True)
+        # HV domain: Q drain --wire--> R_hv pin 2; one label on the
+        # wire; J10/J20 (or J15 for SPARE) join by net name.
+        s.pin_label(q[3], net_hv, mirror=True, wire_ext=5.08,
+                    label_offset=2.54)
+        s.pin_glabel(r_hv[1], "+5V", mirror=True)
+        if j10_pin is not None:
             s.pin_label(j_ti[j10_pin], net_hv,
                         wire_ext=10.16, label_offset=5.08)
             # Parallel TI keyboard connector — same net via shared label
@@ -761,18 +840,16 @@ def build_schematic():
     for p in [3, 14]:
         s.nc(*j_esp_l[p])
 
-    # SPARE repair channel: GPIO14 (header pin 20) -> BOB#4-CH1 -> J15
-    # solder pad. Lets any single dead channel be recovered with one
-    # jumper wire + a firmware remap -- never a new layout.
-    s.pin_label(j_esp_l[20], "SPARE_LV", mirror=True)
-    s.pin_label(j4_lv[6], "SPARE_LV")
-    s.pin_label(j4_hv[6], "SPARE", mirror=True)
+    # SPARE repair channel: GPIO14 (header pin 20) -> Q16 -> J15 solder
+    # pad (the cell itself is generated in the CHANNEL CELLS loop; only
+    # the pad's net label lives here). Lets any single dead channel be
+    # recovered with one jumper wire + a firmware remap.
     s.pin_label(j_spare[1], "SPARE", wire_ext=10.16, label_offset=5.08)
 
-    # Alpha lock (J10/J20 pin 10) is a full BOB channel from GPIO3
-    # (see bob3_nets) -- no standalone passive tie anymore. Firmware
-    # parks the GPIO as INPUT; a parallel TI keyboard on J20 still
-    # passes its alpha-lock switch through the shared ALPHA_LOCK net.
+    # Alpha lock (J10/J20 pin 10) is a full channel from GPIO3 (see
+    # CHANNELS) -- no standalone passive tie. Firmware parks the GPIO as
+    # INPUT; a parallel TI keyboard on J20 still passes its alpha-lock
+    # switch through the shared ALPHA_LOCK net.
 
     # ESP32 right header: GND on pins 1, 21, 22; rest NC (mechanical only)
     s.pin_glabel(j_esp_r[1], "GND")
