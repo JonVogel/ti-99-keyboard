@@ -24,16 +24,53 @@ the original keyboard. The original keyboard can optionally run in parallel.
 - **USB keyboard input** via the native USB-OTG host port (using `EspUsbHost`),
   usable alongside or instead of BLE
 
-## Hardware
+## Hardware — Bill of Materials
+
+The adapter comes in **two editions** that are electrically identical and run
+the same firmware; they differ only in how the 16 level-shifter channels are
+built:
+
+- **DIY edition** (board rev ≤6): all through-hole, level shifting on four
+  plug-in BOB-12009 modules — buildable with just a soldering iron.
+- **Assembled edition** (board rev 7+): the shifters are 48 SMT parts
+  populated by JLCPCB during fabrication — you hand-solder only connectors.
+
+### Common parts (both editions)
 
 | Part | Purpose |
 |------|---------|
-| Hosyond ESP32-S3 N16R8 dev board (USB-C, WROOM-1, 16MB flash, 8MB PSRAM) | MCU with USB host and BLE |
-| Level shifters: 16× BSS138 SOT-23 (LCSC `C78284`) + 32× 10kΩ 0805 pull-ups (LCSC `C17414`), on-board, JLC-assembled | 3.3V ↔ 5V bidirectional, open-drain-friendly; replaces the BOB-12009 modules of rev ≤6 |
-| — (no regulator needed) | Powered by regulated +5V straight from the TI PSU via the power daisy-chain |
-| TI PSU daisy-chain header — Molex KK-396 4-pin, `09-65-2048` (DigiKey **WM18825-ND**; alt `26-60-4040` / **WM4622-ND**) | Passes the TI's power through the board; the TI mainboard's existing female plug mates here |
-| PSU-side mating plug — Molex `09-50-3041` housing (DigiKey **WM2102-ND**) + 4× `08-50-0106` crimp terminals (DigiKey **WM2300-ND**) | Female plug on the board's power cable that connects to the TI power supply |
+| Hosyond ESP32-S3 N16R8 dev board (USB-C, WROOM-1, 16MB flash, 8MB PSRAM) — sold in 3-packs on Amazon | MCU with USB host and BLE |
+| 2× 1×22 female socket strips, 2.54mm | Sockets the ESP32 dev board (never solder the module directly) |
+| 2× 1×15 male pin headers, 2.54mm (snap from 1×40 breakaway strips — e.g. Adam Tech `PH1-40-UA`, DigiKey ~$0.48/strip) | J10 (to the TI) and J20 (optional original keyboard) |
+| 1×2 + 1×1 male header pins (from the same breakaway strips) | J9 bench power header, J15 spare-channel pad |
+| TI PSU daisy-chain header — Molex KK-396 4-pin, `09-65-2048` (DigiKey **WM18825-ND**; alt `26-60-4040` / **WM4622-ND**) | Passes the TI's power through the board; the TI mainboard's existing female plug mates here (J14) |
+| PSU-side mating plug — Molex `09-50-3041` housing (DigiKey **WM2102-ND**) + 4× `08-50-0106` crimp terminals (DigiKey **WM2300-ND**) + ~30cm of 22 AWG stranded wire | Cable from the J13 solder pads to the TI power supply's header |
 | 15-pin female-to-female keyboard ribbon (DIY from bulk Dupont parts, ~$1.5–3.5/cable, no crimping — see note below; or ready-made aftermarket TI ribbon, ~$8) | Connects the adapter's male header to the TI's male keyboard header |
+
+No voltage regulator is needed — the board runs on regulated +5V taken
+straight from the TI PSU via the power daisy-chain. Crimp tool for the KK
+terminals: IWISS SN-48B (~$20), or fold-and-solder the terminal barrels.
+
+### DIY edition — additional parts (board rev ≤6)
+
+| Part | Purpose |
+|------|---------|
+| PCB fabbed from `pcb/gerbers/ti99-kb-adapter_r6.zip` (2-layer, 1.6mm, HASL — ~$1/board at JLCPCB) | The carrier board, all through-hole |
+| 4× BOB-12009 BSS138 level-shifter breakouts (SparkFun ~$3.50 ea, or AliExpress clones) | The 16 shifter channels (4 per module) |
+| 8× 1×6 female socket strips, 2.54mm + male header pins on each BOB | Sockets the four BOB modules |
+
+**Solder generously on the BOB headers** — under-heated joints there were the
+single most common build fault. Test every finished board with
+`test-matrix-loopback/` (onboard LED: green = good, red = bad).
+
+### Assembled edition — what to order (board rev 7+)
+
+| Item | Details |
+|------|---------|
+| JLCPCB order with **PCB Assembly (Economic, Top side)** using the three files in `pcb/gerbers/`: `ti99-kb-adapter_r7.zip` + `ti99-kb-adapter_BOM.csv` + `ti99-kb-adapter_CPL.csv` | Boards arrive with all 48 shifter parts (16× BSS138 `C78284`, 32× 10kΩ `C17414`) machine-soldered — ~$3/board + shipping in qty 10 |
+
+Then add the common parts above (connectors + socketed ESP32) — no SMT work,
+no BOB modules, no shifter soldering.
 
 The adapter is intended for permanent installation inside a TI-99/4A with the
 original keyboard removed (or run in parallel) and a 3D-printed cover over the
