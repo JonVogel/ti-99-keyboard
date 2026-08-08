@@ -111,6 +111,13 @@ Both prior projects were discovered **after** this design was made. Frame the co
 
 After a clean Arduino compile, upload automatically — don't ask first.
 
+## Two product tiers (deliberate, both maintained)
+
+- **DIY tier — V6 lineage (BOB-based, all through-hole):** for hobbyists hand-building from published gerbers: BOB-12009 modules in sockets, no SMT work. Keep the r6 gerbers and BOB documentation alive for this audience.
+- **Product tier — V7+ (discrete SMT, JLC-assembled):** for selling completed boards: machine-soldered shifter fabric, hand-soldered connectors, LED loopback test, ship.
+
+The two are **electrically identical** (same nets, GPIOs, and J10 fabric) — one firmware serves both; only the level-shifter implementation differs.
+
 ## PCB history
 
 - **Rev 1 (TXS0108E):** 5 boards from JLCPCB, ~$6.37, ordered 2026-04-12. Superseded — TXS0108E doesn't work for this load (see above).
