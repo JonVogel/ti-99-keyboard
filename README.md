@@ -33,7 +33,9 @@ built:
 - **DIY edition** (board rev ≤6): all through-hole, level shifting on four
   plug-in BOB-12009 modules — buildable with just a soldering iron.
 - **Assembled edition** (board rev 7+): the shifters are 48 SMT parts
-  populated by JLCPCB during fabrication — you hand-solder only connectors.
+  populated by JLCPCB during fabrication. Hand work remaining: the ESP32
+  (header pins on the module + two 1×22 sockets on the board, ~88 joints)
+  and the connectors — real soldering, just none of the shifter fabric.
 
 ### Common parts (both editions)
 
@@ -69,8 +71,12 @@ single most common build fault. Test every finished board with
 |------|---------|
 | JLCPCB order with **PCB Assembly (Economic, Top side)** using the three files in `pcb/gerbers/`: `ti99-kb-adapter_r7.zip` + `ti99-kb-adapter_BOM.csv` + `ti99-kb-adapter_CPL.csv` | Boards arrive with all 48 shifter parts (16× BSS138 `C78284`, 32× 10kΩ `C17414`) machine-soldered — ~$3/board + shipping in qty 10 |
 
-Then add the common parts above (connectors + socketed ESP32) — no SMT work,
-no BOB modules, no shifter soldering.
+Then add the common parts above. Still hand-soldered: the ESP32 module's
+header pins, the two 1×22 board sockets, and all connectors (~120 joints) —
+what assembly removes is the shifter fabric and the DIY tier's BOB/socket
+work. Run `test-matrix-loopback/` after the ESP32 goes in (LED green = the
+whole path is good), since module-header soldering is where past boards
+have been damaged.
 
 The adapter is intended for permanent installation inside a TI-99/4A with the
 original keyboard removed (or run in parallel) and a 3D-printed cover over the
