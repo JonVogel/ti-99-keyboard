@@ -74,9 +74,9 @@ single most common build fault. Test every finished board with
 Then add the common parts above. Still hand-soldered: the ESP32 module's
 header pins, the two 1×22 board sockets, and all connectors (~120 joints) —
 what assembly removes is the shifter fabric and the DIY tier's BOB/socket
-work. Run `test-matrix-loopback/` after the ESP32 goes in (LED green = the
-whole path is good), since module-header soldering is where past boards
-have been damaged.
+work. Run `test-matrix-loopback/` after the ESP32 goes in — LED green means the
+whole path (module, sockets, traces, every shifter channel) is proven in
+one shot.
 
 The adapter is intended for permanent installation inside a TI-99/4A with the
 original keyboard removed (or run in parallel) and a 3D-printed cover over the
