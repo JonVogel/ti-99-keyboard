@@ -296,9 +296,11 @@ class Schematic:
     def add_simple(self, ref, lib_id, value, fp, x, y, pin_offsets,
                    lcsc=None):
         """Place a single-unit symbol. pin_offsets: {num: (dx, dy)} are the
-        pin CONNECTION points relative to (x, y). Returns {num: (ax, ay)}.
-        lcsc: optional LCSC part number, stored as a hidden "LCSC" property
-        for the JLCPCB assembly BOM export."""
+        pin positions in SYMBOL coordinates (+y up). Returns the pin
+        CONNECTION points in SHEET coordinates (+y down) -- the y axis is
+        INVERTED between the two, which once swapped every FET's gate and
+        drain nets on the board. lcsc: optional LCSC part number, stored
+        as a hidden "LCSC" property for the JLCPCB assembly BOM export."""
         self.needed_parts.add(lib_id)
         pin_lines = "\n".join(
             f'    (pin "{k}" (uuid "{uid()}"))' for k in pin_offsets)
@@ -331,7 +333,7 @@ class Schematic:
             f"    )\n"
             f"  )"
         )
-        return {k: (x + dx, y + dy) for k, (dx, dy) in pin_offsets.items()}
+        return {k: (x + dx, y - dy) for k, (dx, dy) in pin_offsets.items()}
 
     # -- Add a 2-unit multi-part symbol (e.g. BOB-12009, ESP32-S3-N16R8) --
     def add_part2(self, ref, lib_id, value, n_per_unit, fp,
@@ -809,8 +811,10 @@ def build_schematic():
         # at the drain's y. Pin-to-pin gaps equal the label wire stubs.
         r_lv = s.add_simple(f"R{2 * n - 1}", "ti99-parts:R10k", "10k",
                             FP_R, cx + 15.24, cy, R_PINS, lcsc="C17414")
+        # r_hv sits at the drain's SHEET y: drain is at symbol y -2.54,
+        # which lands at sheet cy + 2.54 after the axis inversion.
         r_hv = s.add_simple(f"R{2 * n}", "ti99-parts:R10k", "10k",
-                            FP_R, cx - 15.24, cy - 2.54, R_PINS,
+                            FP_R, cx - 15.24, cy + 2.54, R_PINS,
                             lcsc="C17414")
 
         # LV domain: Q source --wire--> R_lv pin 1; one label on the
