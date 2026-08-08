@@ -57,8 +57,17 @@ from generate_parts import bob_12009_symbol, esp32_symbol  # noqa: E402
 PROJECT = "ti99-kb-adapter"
 
 
+_UID_NS = uuid.uuid5(uuid.NAMESPACE_DNS, "ti99-kb-adapter.jonvogel")
+_uid_counter = 0
+
+
 def uid():
-    return str(uuid.uuid4())
+    """Deterministic UUIDs: the Nth call always returns the same value,
+    so regenerating an unchanged design produces a byte-identical file
+    (no git churn) and KiCad's UUID-based links survive regeneration."""
+    global _uid_counter
+    _uid_counter += 1
+    return str(uuid.uuid5(_UID_NS, str(_uid_counter)))
 
 
 # ---------------------------------------------------------------------------
